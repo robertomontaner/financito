@@ -39,6 +39,98 @@ function accountOptions(filter = () => true, selected = '') {
   }
   return Object.entries(groups).map(([g, list]) => `<optgroup label="${esc(g)}">${list.map((c) => `<option value="${esc(c.codigo)}" ${String(selected) === c.codigo ? 'selected' : ''}>${esc(c.nombre)}${S.verCodigos ? ` · ${esc(c.codigo)}` : ''}</option>`).join('')}</optgroup>`).join('');
 }
+
+// ---------------- selector de cuentas amigable ----------------
+const norm = (s) => String(s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+const EMOJI_RULES = [
+  [/s[uú]per|mercadona|lidl|casa|hogar/i, '🛒'], [/coche|transporte|gasolina|veh[ií]culo/i, '🚗'], [/salud|cuidado|fisio|farmacia/i, '💊'],
+  [/ocio|social|cena|bar/i, '🎉'], [/compras|proyecto/i, '🛍️'], [/viaje/i, '✈️'], [/mam[aá]|familia/i, '👪'], [/seguro/i, '🛡️'],
+  [/suscrip/i, '📺'], [/gimnasio|gym/i, '🏋️'], [/n[oó]mina|trabajo/i, '💼'], [/comisi/i, '🤝'], [/amazon|cheque|regalo/i, '🎁'],
+  [/piso|vivienda/i, '🏠'], [/mobiliario|mueble/i, '🛋️'], [/equipo|inform/i, '💻'], [/hipoteca|pr[eé]stamo/i, '🏛️'],
+  [/inter[eé]s/i, '％'], [/amortiz/i, '⏳'], [/patrimonio|hist[oó]rico/i, '⚖️'], [/descuadre/i, '🧮'], [/inversi|ganancia|p[eé]rdida/i, '📈'],
+];
+const KIND_EMOJI = { dinero: '🏦', bien: '📦', deuda: '📉', gasto: '🧾', ingreso: '💶', contable: '⚙️' };
+function emojiFor(c) {
+  if (!c) return '•';
+  const k = kindOf(c);
+  if (k === 'dinero') return /efectivo/i.test(c.nombre) ? '💵' : /trade|inversi|fondo|broker/i.test(c.nombre) || c.grupo === 'Inversiones' ? '📈' : /extraordinario/i.test(c.nombre) ? '🧰' : '🏦';
+  for (const [re, e] of EMOJI_RULES) if (re.test(c.nombre)) return e;
+  return KIND_EMOJI[k];
+}
+const PICKERS = {}; let pickerSeq = 0;
+function pickerFace(code, ph = 'Elegir…') {
+  const c = S.libro.byCode[String(code)];
+  if (!c) return `<span class="pk-ic">＋</span><span class="pk-txt"><span class="pk-ph">${esc(ph)}</span></span><span class="pk-caret">›</span>`;
+  return `<span class="pk-ic">${emojiFor(c)}</span><span class="pk-txt"><span class="pk-name">${esc(c.nombre)}</span><span class="pk-sub">${esc(displayGroup(c))}${S.verCodigos ? ` · ${esc(c.codigo)}` : ''}</span></span><span class="pk-caret">›</span>`;
+}
+// filter(c, root) puede depender de lo que haya en el formulario
+function pickerField(name, label, filter, selected = '', opts = {}) {
+  const id = `pk${++pickerSeq}`; PICKERS[id] = { filter, label, ...opts };
+  return `<div class="field"><label class="lbl">${esc(label)}</label><input type="hidden" name="${name}" value="${esc(selected || '')}" data-pk-input="${id}">
+    <button type="button" class="picker" data-pk="${id}" aria-label="${esc(label)}">${pickerFace(selected, opts.placeholder)}</button>${opts.hint ? `<div class="hint">${esc(opts.hint)}</div>` : ''}</div>`;
+}
+function setPicker(root, name, code) {
+  const input = $(`input[type=hidden][name="${name}"]`, root); if (!input) return;
+  input.value = code; const btn = $(`[data-pk="${input.dataset.pkInput}"]`, root); if (btn) btn.innerHTML = pickerFace(code);
+}
+function bindPickers(root) {
+  $$('[data-pk]', root).forEach((btn) => {
+    btn.onclick = () => {
+      const id = btn.dataset.pk; const cfg = PICKERS[id]; const input = $(`[data-pk-input="${id}"]`, root);
+      openPicker({
+        title: cfg.title || cfg.label, selected: input.value, createKind: cfg.createKind,
+        filter: (c) => cfg.filter(c, root),
+        onPick: (code) => { input.value = code; btn.innerHTML = pickerFace(code); input.dispatchEvent(new Event('change', { bubbles: true })); },
+      });
+    };
+  });
+}
+function openPicker({ title, filter, selected, onPick, createKind }) {
+  const L = S.libro; const root = $('#picker-root');
+  const all = L.cuentas.filter((c) => filter(c) && (!(c.activa === 0 || c.activa === '0') || c.codigo === String(selected)));
+  const freq = {}; L.activeRows.slice(-300).forEach((r) => { freq[r.debe] = (freq[r.debe] || 0) + 1; freq[r.haber] = (freq[r.haber] || 0) + 1; });
+  const recents = all.length > 7 ? all.filter((c) => freq[c.codigo]).sort((a, b) => freq[b.codigo] - freq[a.codigo]).slice(0, 4) : [];
+  const ORDER = ['dinero', 'gasto', 'ingreso', 'bien', 'deuda', 'contable'];
+  const item = (c) => {
+    const sub = [displayGroup(c), kindOf(c) === 'dinero' && L.inicio ? eur(L.balanceToDate(c.codigo)) : '', S.verCodigos ? c.codigo : ''].filter(Boolean).join(' · ');
+    return `<button type="button" class="pk-item ${c.codigo === String(selected) ? 'on' : ''}" data-code="${esc(c.codigo)}"><span class="pk-ic">${emojiFor(c)}</span><span class="pk-txt"><span class="pk-name">${esc(c.nombre)}</span><span class="pk-sub">${esc(sub)}</span></span>${c.codigo === String(selected) ? '<span class="pk-check">✓</span>' : ''}</button>`;
+  };
+  const close = () => { root.innerHTML = ''; document.removeEventListener('keydown', onKey, true); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  document.addEventListener('keydown', onKey, true);
+  root.innerHTML = `<div class="sheet-back"><div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+    <div class="row between"><h2 style="margin:0">${esc(title)}</h2><button type="button" class="iconbtn" data-x aria-label="Cerrar">✕</button></div>
+    ${all.length > 7 ? '<input type="search" class="pk-search" placeholder="Buscar…" autocomplete="off">' : ''}
+    <div class="pk-list"></div></div></div>`;
+  const back = $('.sheet-back', root); const listEl = $('.pk-list', root); const search = $('.pk-search', root);
+  back.addEventListener('click', (e) => { if (e.target === back) close(); });
+  $('[data-x]', root).onclick = close;
+  const draw = () => {
+    const q = norm(search?.value);
+    const showRecents = !q && recents.length;
+    const found = all.filter((c) => (!q || norm(`${c.nombre} ${displayGroup(c)} ${c.codigo}`).includes(q)) && !(showRecents && recents.includes(c)));
+    const groups = {}; found.forEach((c) => (groups[kindOf(c)] ??= []).push(c));
+    let html = '';
+    if (showRecents) html += `<h3>Más usadas</h3><div class="pk-grid">${recents.map(item).join('')}</div>`;
+    for (const k of ORDER) if (groups[k]) html += `${Object.keys(groups).length > 1 || showRecents ? `<h3>${esc(KIND_LABEL[k])}</h3>` : ''}<div class="pk-grid">${groups[k].map(item).join('')}</div>`;
+    if (!found.length && !showRecents) html += `<div class="empty">Nada con «${esc(search?.value || '')}».</div>`;
+    if (createKind && q && !all.some((c) => norm(c.nombre) === q)) html += `<button type="button" class="pk-item pk-new" data-create><span class="pk-ic">＋</span><span class="pk-txt"><span class="pk-name">Crear «${esc(search.value.trim())}»</span><span class="pk-sub">${esc((KIND_DEF[createKind]?.titulo || '').replace(/^Nuev[oa] /, ''))}</span></span></button>`;
+    listEl.innerHTML = html;
+    $$('[data-code]', listEl).forEach((b) => { b.onclick = () => { close(); onPick(b.dataset.code); }; });
+    $('[data-create]', listEl)?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget; btn.disabled = true;
+      try {
+        const def = KIND_DEF[createKind]; const codigo = nextCode(L.cuentas, createKind); const nombre = search.value.trim().replace(/^./, (x) => x.toUpperCase());
+        await S.store.add('Cuentas', [{ codigo, nombre, tipo: def.tipo, grupo: def.grupo, orden: L.cuentas.length + 1, activa: 1 }]);
+        await reload(); close(); onPick(codigo); toast(`Creada: ${nombre}`);
+      } catch (err) { btn.disabled = false; fail(err); }
+    });
+  };
+  draw();
+  if (search) { search.oninput = draw; if (matchMedia('(pointer:fine)').matches) search.focus(); }
+  $('.pk-item.on', listEl)?.scrollIntoView({ block: 'center' });
+}
+
 const isTes = (c) => c.grupo === 'Tesorería';
 const isMoney = (c) => kindOf(c) === 'dinero';
 const isPayer = (c) => isMoney(c) || kindOf(c) === 'deuda';
@@ -111,6 +203,7 @@ function closeModal() { $('#modal-root').innerHTML = ''; document.removeEventLis
 // fields: {key,label,type,options,hint,step,required}
 function fieldHtml(f, v) {
   const id = `f_${f.key}`; const val = v ?? '';
+  if (f.type === 'account') return pickerField(f.key, f.label, f.filter, val, { createKind: f.createKind, hint: f.hint });
   if (f.type === 'checkbox') return `<div class="field"><label class="check"><input type="checkbox" id="${id}" name="${f.key}" ${truthy(val) ? 'checked' : ''}> <span>${esc(f.label)}</span></label>${f.hint ? `<div class="hint">${esc(f.hint)}</div>` : ''}</div>`;
   let input;
   if (f.type === 'select') {
@@ -133,6 +226,7 @@ function formModal({ title, fields, values = {}, onSave, onDelete, saveLabel = '
   openModal(`<h2>${esc(title)}</h2><form novalidate>${fields.map((f) => fieldHtml(f, values[f.key])).join('')}${extra}
     <div class="actions">${onDelete ? '<button type="button" class="btn danger" data-del>Borrar</button>' : ''}<button type="button" class="btn" data-cancel>Cancelar</button><button class="btn primary" type="submit">${esc(saveLabel)}</button></div></form>`, (m) => {
     const form = $('form', m);
+    bindPickers(m);
     $('[data-cancel]', m).onclick = closeModal;
     if (onDelete) $('[data-del]', m).onclick = async () => { if (!confirm('¿Seguro?')) return; try { await onDelete(); closeModal(); render(); } catch (e) { fail(e); } };
     form.onsubmit = async (e) => {
@@ -313,7 +407,7 @@ function viewApuntar() {
   const fecha = `<div class="field"><label class="lbl" for="f_fecha">Fecha</label><input type="date" id="f_fecha" name="fecha" value="${todayISO()}" required></div>`;
   const importe = `<div class="field"><input class="bigamount" type="text" inputmode="decimal" name="importe" placeholder="0,00 €" autocomplete="off" required aria-label="Importe"></div>`;
   const concepto = (ph) => `<div class="field"><label class="lbl" for="f_concepto">Concepto</label><input type="text" id="f_concepto" name="concepto" placeholder="${esc(ph)}" autocomplete="off"></div>`;
-  const sel = (name, label, filter, def) => `<div class="field"><label class="lbl" for="f_${name}">${esc(label)}</label><select id="f_${name}" name="${name}" required>${accountOptions(filter, def)}</select></div>`;
+  const sel = (name, label, filter, def, createKind) => pickerField(name, label, filter, def, { createKind });
   const notas = '<details style="margin-bottom:12px"><summary class="small muted">Notas</summary><textarea name="notas" style="margin-top:8px"></textarea></details>';
 
   if (t === 'gasto') {
@@ -322,12 +416,12 @@ function viewApuntar() {
     const defCat = last('debe', gastosCorr[0]?.codigo || '');
     body = `${importe}${concepto('Lidl, gasolina, cena…')}
       <div class="quick" id="quick" style="margin-top:0">${gastosCorr.map((c) => `<button type="button" data-v="${esc(c.codigo)}" class="${c.codigo === defCat ? 'on' : ''}">${esc(c.nombre)}</button>`).join('')}</div>
-      ${sel('debe', 'Categoría', isGasto, defCat)}
+      ${sel('debe', 'Categoría', isGasto, defCat, 'gasto')}
       ${sel('haber', 'Pagado con', isMoney, last('haber', firstTes))}
       <div class="two">${fecha}<div class="field"><label class="lbl">&nbsp;</label><label class="check"><input type="checkbox" name="imprevisto"> Imprevisto</label></div></div>${notas}`;
   } else if (t === 'ingreso') {
     body = `${importe}${concepto('Nómina, comisión, venta…')}
-      ${sel('haber', 'Tipo de ingreso', isIngreso, last('haber', L.accountsOf('ingreso')[0]?.codigo))}
+      ${sel('haber', 'Tipo de ingreso', isIngreso, last('haber', L.accountsOf('ingreso')[0]?.codigo), 'ingreso')}
       ${sel('debe', 'Cobrado en', isMoney, last('debe', firstTes))}${fecha}${notas}`;
   } else if (t === 'traspaso') {
     const pay = isPayer;
@@ -337,7 +431,7 @@ function viewApuntar() {
   } else if (t === 'activo') {
     const act = (c) => kindOf(c) === 'bien';
     body = `${importe}${concepto('Patinete, impresora, entrada piso…')}
-      ${sel('debe', 'Tipo de bien', act, last('debe', '218'))}
+      ${sel('debe', 'Tipo de bien', act, last('debe', '218'), 'bien')}
       ${sel('haber', 'Pagado con', isMoney, last('haber', firstTes))}${fecha}
       <div class="field"><label class="check"><input type="checkbox" name="amortizar" id="f_amortizar"> Amortizar (repartir el gasto en el tiempo)</label></div>
       <div id="amortbox" hidden class="two"><div class="field"><label class="lbl">Vida útil (años)</label><input type="text" inputmode="decimal" name="vida" value="3"></div><div class="field"><label class="lbl">Valor residual €</label><input type="text" inputmode="decimal" name="residual" value="0"></div></div>${notas}`;
@@ -354,7 +448,8 @@ function viewApuntar() {
 
   $$('.seg button').forEach((b) => { b.onclick = () => { S.apuntar = b.dataset.t; viewApuntar(); }; });
   const form = $('#apunte');
-  $$('#quick button').forEach((b) => { b.onclick = () => { $$('#quick button').forEach((x) => x.classList.remove('on')); b.classList.add('on'); form.elements.debe.value = b.dataset.v; }; });
+  bindPickers(form);
+  $$('#quick button').forEach((b) => { b.onclick = () => { $$('#quick button').forEach((x) => x.classList.remove('on')); b.classList.add('on'); setPicker(form, 'debe', b.dataset.v); }; });
   if (form.elements.debe && $('#quick')) form.elements.debe.onchange = () => $$('#quick button').forEach((x) => x.classList.toggle('on', x.dataset.v === form.elements.debe.value));
   const am = $('#f_amortizar'); if (am) am.onchange = () => { $('#amortbox').hidden = !am.checked; };
   setTimeout(() => form.elements.importe?.focus(), 50);
@@ -389,8 +484,8 @@ function editEntry(id) {
     { key: 'fecha', label: 'Fecha', type: 'date', required: true },
     { key: 'concepto', label: 'Concepto' },
     { key: 'importe', label: 'Importe €', type: 'number', required: true },
-    { key: 'debe', label: 'Va a (debe)', type: 'select', options: (v) => accountOptions(all, v), required: true },
-    { key: 'haber', label: 'Sale de (haber)', type: 'select', options: (v) => accountOptions(all, v), required: true },
+    { key: 'haber', label: 'Sale de', type: 'account', filter: all, required: true },
+    { key: 'debe', label: 'Va a', type: 'account', filter: all, required: true },
     { key: 'clase', label: 'Clase', type: 'select', options: Object.entries(CLASES) },
     { key: 'notas', label: 'Notas', type: 'textarea' },
   ];
@@ -619,7 +714,7 @@ function editSobre(id, kind) {
   const L = S.libro; const p = (L.db.Presupuesto || []).find((x) => String(x.id) === String(id));
   const k = p ? (L.kind(String(p.cuenta)) === 'gasto' ? 'gasto' : 'dinero') : kind;
   const fields = [
-    { key: 'cuenta', label: k === 'gasto' ? 'Categoría' : 'Cuenta', type: 'select', options: (v) => accountOptions((c) => kindOf(c) === k && (k === 'gasto' || c.grupo === 'Tesorería'), v), required: true },
+    { key: 'cuenta', label: k === 'gasto' ? 'Categoría' : 'Cuenta', type: 'account', filter: (c) => (k === 'gasto' ? isGasto(c) : c.grupo === 'Tesorería'), required: true },
     { key: 'importe', label: k === 'gasto' ? 'Límite mensual €' : 'Dinero asignado al mes €', type: 'number', required: true },
     { key: 'ambito', label: 'Para', type: 'select', options: [['*', 'Todos los meses'], ['mes', `Solo ${mesLargo(S.mes)}`]] },
   ];
@@ -696,7 +791,7 @@ function viewAjustes() {
       <button class="btn sm" data-new="ingreso" style="margin-top:8px">+ Tipo de ingreso</button></div>
 
     <h2>Automatizaciones mensuales</h2>
-    <div class="card"><ul class="list">${rec.map((r) => `<li class="tap" data-rec="${esc(r.id)}"><div class="grow"><div class="t">${esc(r.nombre)}</div><div class="s">Día ${esc(r.dia)} · ${esc(L.nombre(String(r.haber)))} → ${esc(L.nombre(String(r.debe)))} · desde ${esc(r.desde)}${r.hasta ? ` hasta ${esc(r.hasta)}` : ''}</div></div><div class="amount">${eur(num(r.importe))}</div><span class="chip">${truthy(r.activo) ? 'activa' : 'pausada'}</span></li>`).join('') || '<li class="muted">Ninguna</li>'}</ul>
+    <div class="card"><ul class="list">${rec.map((r) => `<li class="tap" data-rec="${esc(r.id)}"><span class="pk-ic">${emojiFor(L.byCode[String(r.debe)])}</span><div class="grow"><div class="t">${esc(r.nombre)}</div><div class="s">Día ${esc(r.dia)} de cada mes · ${esc(L.nombre(String(r.haber)))} → ${esc(L.nombre(String(r.debe)))}</div></div><div class="amount">${eur(num(r.importe))}</div><span class="chip">${truthy(r.activo) ? 'activa' : 'pausada'}</span></li>`).join('') || '<li class="muted">Ninguna</li>'}</ul>
       <button class="btn block" id="addrec" style="margin-top:8px">Añadir automatización</button>
       <p class="small muted">Cada mes, al abrir la app, se apuntan solas las que toquen. Si borras una generada, no se vuelve a crear.</p></div>
 
@@ -748,35 +843,60 @@ function viewAjustes() {
 }
 
 const CLASE_OPTS = Object.entries(CLASES).filter(([k]) => ['corriente', 'imprevisto', 'traspaso', 'ingreso', 'patrimonial'].includes(k));
+const REC_TIPOS = {
+  gasto: { label: 'Gasto fijo', desc: 'Sale dinero de un banco para pagar algo (Mamá, gym, suscripciones…).', haber: ['Se paga desde', (c) => isMoney(c), null], debe: ['Categoría', (c) => isGasto(c), 'gasto'], clase: 'corriente' },
+  traspaso: { label: 'Ahorro o reparto', desc: 'Mueves dinero entre tus cuentas (fondo extraordinarios, Trade Republic, Revolut…).', haber: ['Desde', (c) => isPayer(c), null], debe: ['Hacia', (c) => isPayer(c), 'dinero'], clase: 'traspaso' },
+  ingreso: { label: 'Ingreso', desc: 'Te entra dinero cada mes (nómina, alquiler…).', haber: ['Tipo de ingreso', (c) => isIngreso(c), 'ingreso'], debe: ['Entra en', (c) => isMoney(c), null], clase: 'ingreso' },
+};
 function editRecurrente(id) {
   const L = S.libro; const r = (L.db.Recurrentes || []).find((x) => String(x.id) === String(id));
-  const fields = [
-    { key: 'nombre', label: 'Nombre', required: true },
-    { key: 'importe', label: 'Importe €', type: 'number', required: true },
-    { key: 'haber', label: 'Sale de', type: 'select', options: (v) => accountOptions(() => true, v), required: true },
-    { key: 'debe', label: 'Va a', type: 'select', options: (v) => accountOptions(() => true, v), required: true },
-    { key: 'dia', label: 'Día del mes', type: 'number', required: true },
-    { key: 'clase', label: 'Clase', type: 'select', options: CLASE_OPTS },
-    { key: 'desde', label: 'Desde (mes)', type: 'month', required: true },
-    { key: 'hasta', label: 'Hasta (mes, opcional)', type: 'month' },
-    { key: 'activo', label: 'Activa', type: 'checkbox' },
-  ];
-  formModal({
-    title: r ? 'Editar automatización' : 'Nueva automatización', fields,
-    values: r ? { ...r, desde: String(r.desde).slice(0, 7), hasta: String(r.hasta || '').slice(0, 7) } : { dia: 1, clase: 'corriente', desde: ym(todayISO()), activo: 1, haber: L.cuentas.find(isTes)?.codigo },
-    onSave: async (d) => {
-      const row = { ...(r || { id: uid() }), ...d, dia: Math.round(num(d.dia)) || 1 };
-      if (r) await S.store.update('Recurrentes', [row]); else await S.store.add('Recurrentes', [row]);
-      await reload({ automations: true }); if (S.autoMsg) toast(S.autoMsg, 4000);
-    },
-    onDelete: r ? async () => { await updateRows('Recurrentes', [{ ...r, activo: 0, nombre: `${r.nombre} (borrada)` }]); } : null,
-  });
+  const tipoDe = (x) => (x.clase === 'traspaso' ? 'traspaso' : (x.clase === 'ingreso' || L.tipo(String(x.haber)) === 'ingreso') ? 'ingreso' : 'gasto');
+  const st = r ? { ...r, desde: String(r.desde).slice(0, 7), hasta: String(r.hasta || '').slice(0, 7), haber: String(r.haber), debe: String(r.debe), tipo: tipoDe(r) }
+    : { tipo: 'gasto', dia: 1, desde: ym(todayISO()), hasta: '', activo: 1, haber: L.byCode['5721'] ? '5721' : (L.cuentas.find(isMoney)?.codigo || ''), debe: '', nombre: '', importe: '' };
+  const draw = (m) => {
+    const T = REC_TIPOS[st.tipo];
+    if (!T.haber[1](L.byCode[st.haber] || {})) st.haber = '';
+    if (!T.debe[1](L.byCode[st.debe] || {})) st.debe = '';
+    m.innerHTML = `<h2>${r ? 'Editar automatización' : 'Nueva automatización'}</h2>
+      <div class="seg" style="margin-bottom:8px">${Object.entries(REC_TIPOS).map(([k, t]) => `<button type="button" data-tipo="${k}" class="${k === st.tipo ? 'on' : ''}">${t.label}</button>`).join('')}</div>
+      <p class="hint" style="margin:0 0 12px">${esc(T.desc)}</p>
+      <form novalidate>
+        <div class="field"><label class="lbl" for="r_nombre">Nombre</label><input type="text" id="r_nombre" name="nombre" value="${esc(st.nombre)}" placeholder="Ej.: Gimnasio" autocomplete="off"></div>
+        <div class="two"><div class="field"><label class="lbl" for="r_imp">Importe €</label><input type="text" inputmode="decimal" id="r_imp" name="importe" value="${esc(st.importe === '' ? '' : String(st.importe).replace('.', ','))}"></div>
+        <div class="field"><label class="lbl" for="r_dia">Día del mes</label><input type="text" inputmode="numeric" id="r_dia" name="dia" value="${esc(st.dia)}"></div></div>
+        ${pickerField('haber', T.haber[0], T.haber[1], st.haber, { createKind: T.haber[2] })}
+        ${pickerField('debe', T.debe[0], T.debe[1], st.debe, { createKind: T.debe[2] })}
+        <div class="two"><div class="field"><label class="lbl" for="r_desde">Desde</label><input type="month" id="r_desde" name="desde" value="${esc(st.desde)}"></div>
+        <div class="field"><label class="lbl" for="r_hasta">Hasta (opcional)</label><input type="month" id="r_hasta" name="hasta" value="${esc(st.hasta)}"></div></div>
+        <div class="field"><label class="check"><input type="checkbox" name="activo" ${truthy(st.activo) ? 'checked' : ''}> Activa</label></div>
+        <div class="actions">${r ? '<button type="button" class="btn danger" data-del>Borrar</button>' : ''}<button type="button" class="btn" data-cancel>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+      </form>`;
+    const form = $('form', m);
+    const sync = () => { const f = form.elements; Object.assign(st, { nombre: f.nombre.value, importe: f.importe.value, dia: f.dia.value, desde: f.desde.value, hasta: f.hasta.value, activo: f.activo.checked ? 1 : 0, haber: f.haber.value, debe: f.debe.value }); };
+    bindPickers(m);
+    form.elements.debe.addEventListener('change', () => { if (!form.elements.nombre.value.trim()) form.elements.nombre.value = L.nombre(form.elements.debe.value); });
+    $$('[data-tipo]', m).forEach((b) => { b.onclick = () => { sync(); st.tipo = b.dataset.tipo; draw(m); }; });
+    $('[data-cancel]', m).onclick = closeModal;
+    $('[data-del]', m)?.addEventListener('click', async () => { if (!confirm('¿Borrar esta automatización? Lo ya apuntado se queda.')) return; try { await updateRows('Recurrentes', [{ ...r, activo: 0, nombre: `${r.nombre} (borrada)` }]); closeModal(); render(); } catch (e) { fail(e); } });
+    form.onsubmit = async (e) => {
+      e.preventDefault(); sync();
+      if (!st.nombre.trim() || !num(st.importe) || !st.haber || !st.debe || !st.desde) { toast('Rellena nombre, importe, las dos cuentas y desde cuándo'); return; }
+      if (st.haber === st.debe) { toast('Las dos cuentas no pueden ser la misma'); return; }
+      const row = { ...(r || { id: uid() }), nombre: st.nombre.trim(), importe: round2(num(st.importe)), dia: Math.min(31, Math.max(1, Math.round(num(st.dia)) || 1)), haber: st.haber, debe: st.debe, clase: T.clase, desde: st.desde, hasta: st.hasta, activo: st.activo };
+      const btn = $('button[type=submit]', form); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+      try {
+        if (r) await S.store.update('Recurrentes', [row]); else await S.store.add('Recurrentes', [row]);
+        await reload({ automations: true }); closeModal(); render(); if (S.autoMsg) toast(S.autoMsg, 4000);
+      } catch (err) { btn.disabled = false; btn.textContent = 'Guardar'; fail(err); }
+    };
+  };
+  openModal('', draw);
 }
 function editActivo(id) {
   const L = S.libro; const a = (L.db.Activos || []).find((x) => String(x.id) === String(id));
   const fields = [
     { key: 'nombre', label: 'Nombre', required: true },
-    { key: 'cuenta', label: 'Cuenta de activo', type: 'select', options: (v) => accountOptions((c) => c.grupo === 'Inmovilizado' && c.codigo !== '281', v), required: true },
+    { key: 'cuenta', label: 'Tipo de bien', type: 'account', filter: (c) => kindOf(c) === 'bien', createKind: 'bien', required: true },
     { key: 'fecha_alta', label: 'Fecha de compra', type: 'date', required: true },
     { key: 'valor', label: 'Valor de compra €', type: 'number', required: true },
     { key: 'vida_meses', label: 'Vida útil (meses)', type: 'number', required: true, hint: '36 = 3 años' },
@@ -798,9 +918,9 @@ function editPrestamo(id) {
     { key: 'interes_anual', label: 'Interés anual %', type: 'number', required: true },
     { key: 'plazo_meses', label: 'Plazo (meses)', type: 'number', required: true, hint: '360 = 30 años' },
     { key: 'primera_cuota', label: 'Fecha de la primera cuota', type: 'date', required: true },
-    { key: 'cuenta_banco', label: 'Se paga desde', type: 'select', options: (v) => accountOptions(isTes, v), required: true },
-    { key: 'cuenta_pasivo', label: 'Cuenta de deuda', type: 'select', options: (v) => accountOptions((c) => c.tipo === 'pasivo', v), required: true },
-    { key: 'cuenta_interes', label: 'Cuenta de intereses', type: 'select', options: (v) => accountOptions(isGasto, v), required: true },
+    { key: 'cuenta_banco', label: 'Se paga desde', type: 'account', filter: isMoney, required: true },
+    { key: 'cuenta_pasivo', label: 'Deuda', type: 'account', filter: (c) => kindOf(c) === 'deuda', createKind: 'deuda', required: true },
+    { key: 'cuenta_interes', label: 'Los intereses van a', type: 'account', filter: (c) => c.tipo === 'gasto', required: true },
     { key: 'activo', label: 'Generar cuotas automáticamente', type: 'checkbox' },
   ];
   const cuadro = p ? cuadroPrestamo(p) : [];
