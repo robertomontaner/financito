@@ -78,7 +78,7 @@ function seedData() {
   return {
     Cuentas: CUENTAS_INICIALES,
     Recurrentes: RECURRENTES_INICIALES.map((r) => ({ id: uid(), ...r })),
-    Config: [{ clave: 'creado', valor: todayISO() }, { clave: 'version', valor: '1' }],
+    Config: [{ clave: 'creado', valor: todayISO() }, { clave: 'version', valor: '2' }],
   };
 }
 
@@ -210,6 +210,7 @@ function seedDemo(db) {
     if (k === -1) add(iso(mm, 20), 'Ruedas coche', '601', '5721', 80, 'imprevisto');
   }
   db.Diario = rows;
+  db.Config.push({ clave: 'inicio', valor: iso(m - 3, 1) });
   db.Presupuesto = [
     { id: uid(), mes: '*', cuenta: '600', importe: 150, borrado: '' },
     { id: uid(), mes: '*', cuenta: '603', importe: 80, borrado: '' },

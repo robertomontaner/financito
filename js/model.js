@@ -15,7 +15,7 @@ export const TABLES = {
 // grupo: agrupación para pantallas e informes
 export const CUENTAS_INICIALES = [
   ['100', 'Patrimonio inicial', 'patrimonio', 'Patrimonio neto'],
-  ['119', 'Contrapartida histórico', 'patrimonio', 'Patrimonio neto'],
+  ['119', 'Histórico sin cuenta', 'patrimonio', 'Patrimonio neto'],
   ['170', 'Hipoteca', 'pasivo', 'Deudas'],
   ['211', 'Piso', 'activo', 'Inmovilizado'],
   ['216', 'Mobiliario y hogar', 'activo', 'Inmovilizado'],
@@ -130,20 +130,25 @@ export class Libro {
       ...r, debe: String(r.debe), haber: String(r.haber), importe: num(r.importe), fecha: normDate(r.fecha),
     }));
     this.activeRows = this.rows.filter((r) => !truthy(r.borrado) && r.fecha);
+    this.config = Object.fromEntries((db.Config || []).map((c) => [c.clave, c.valor]));
+    // Fecha desde la que se llevan saldos (asiento de apertura). Lo anterior solo cuenta para estadísticas (PyG, gráficos).
+    this.inicio = normDate(this.config.inicio || '');
+    this.balRows = this.inicio ? this.activeRows.filter((r) => r.fecha >= this.inicio) : this.activeRows;
     this._index();
   }
 
   _index() {
-    // mov[codigo][YYYY-MM] = { d, h }
-    const mov = {};
-    const add = (code, month, key, v) => {
-      mov[code] ??= {}; mov[code][month] ??= { d: 0, h: 0 }; mov[code][month][key] += v;
+    // mov[codigo][YYYY-MM] = { d, h }  (todos)   movB: solo desde el inicio de saldos
+    const build = (rows) => {
+      const mov = {};
+      for (const r of rows) {
+        const m = ym(r.fecha);
+        for (const [code, k] of [[r.debe, 'd'], [r.haber, 'h']]) { mov[code] ??= {}; mov[code][m] ??= { d: 0, h: 0 }; mov[code][m][k] += r.importe; }
+      }
+      return mov;
     };
-    for (const r of this.activeRows) {
-      const m = ym(r.fecha);
-      add(r.debe, m, 'd', r.importe);
-      add(r.haber, m, 'h', r.importe);
-    }
+    const mov = build(this.activeRows);
+    this.movB = this.inicio ? build(this.balRows) : mov;
     this.mov = mov;
     const months = this.activeRows.map((r) => ym(r.fecha)).sort();
     this.firstMonth = months[0] || ym(todayISO());
@@ -161,19 +166,47 @@ export class Libro {
   }
   // saldo acumulado a fin de mes (inclusive)
   balanceAt(code, month) {
-    const all = this.mov[code]; if (!all) return 0;
+    const all = this.movB[code]; if (!all) return 0;
     let s = 0;
     for (const [mm, v] of Object.entries(all)) if (mm <= month) s += this.debitNormal(code) ? v.d - v.h : v.h - v.d;
     return round2(s);
   }
   balanceToDate(code, date = todayISO()) {
     let s = 0;
-    for (const r of this.activeRows) {
+    for (const r of this.balRows) {
       if (r.fecha > date) continue;
       if (r.debe === code) s += this.debitNormal(code) ? r.importe : -r.importe;
       if (r.haber === code) s += this.debitNormal(code) ? -r.importe : r.importe;
     }
     return round2(s);
+  }
+
+  // clase "humana" de una cuenta: dinero (bancos, efectivo, inversiones), bien, deuda, gasto, ingreso, contable
+  kind(code) { return kindOf(this.byCode[code] || { codigo: code, tipo: this.tipo(code) }); }
+
+  // PyG por columnas arbitrarias: cols = [{ label, from: 'AAAA-MM', to: 'AAAA-MM' }]
+  pygCols(cols) {
+    const val = {}; const imp = cols.map(() => 0);
+    for (const r of this.activeRows) {
+      const m = ym(r.fecha);
+      const idx = cols.map((c, i) => (m >= c.from && m <= c.to ? i : -1)).filter((i) => i >= 0);
+      if (!idx.length) continue;
+      for (const [code, side] of [[r.debe, 'd'], [r.haber, 'h']]) {
+        const t = this.tipo(code);
+        if (t !== 'gasto' && t !== 'ingreso') continue;
+        const sign = t === 'gasto' ? (side === 'd' ? 1 : -1) : (side === 'h' ? 1 : -1);
+        val[code] ??= cols.map(() => 0);
+        for (const i of idx) { val[code][i] += sign * r.importe; if (t === 'gasto' && r.clase === 'imprevisto') imp[i] += sign * r.importe; }
+      }
+    }
+    const build = (tipo) => Object.keys(val).filter((c) => this.tipo(c) === tipo)
+      .map((c) => ({ code: c, nombre: this.nombre(c), grupo: displayGroup(this.byCode[c]) || '', values: val[c].map(round2) }))
+      .filter((r) => r.values.some((v) => Math.abs(v) > 0.004))
+      .sort((a, b) => a.code.localeCompare(b.code));
+    const ingresos = build('ingreso'); const gastos = build('gasto');
+    const sum = (list) => cols.map((_, i) => round2(list.reduce((s, r) => s + r.values[i], 0)));
+    const ti = sum(ingresos); const tg = sum(gastos);
+    return { cols, ingresos, gastos, totalIngresos: ti, totalGastos: tg, resultado: ti.map((v, i) => round2(v - tg[i])), imprevistos: imp.map(round2) };
   }
 
   accountsOf(tipo) { return this.cuentas.filter((c) => c.tipo === tipo); }
@@ -339,6 +372,35 @@ export function cuadroPrestamo(p) {
     out.push({ n: k, fecha: dateInMonth(addMonths(ym(start), k - 1), day), cuota: round2(intereses + capital), intereses, capital, pendiente: saldo });
   }
   return out;
+}
+
+// ---------- vocabulario "humano" sobre el plan de cuentas ----------
+const DINERO = ['Tesorería', 'Inversiones', 'Bancos', 'Bancos y efectivo'];
+export function kindOf(c) {
+  if (!c) return 'contable';
+  const t = c.tipo || guessTipo(c.codigo);
+  if (t === 'gasto') return 'gasto';
+  if (t === 'ingreso') return 'ingreso';
+  if (t === 'pasivo') return 'deuda';
+  if (t === 'patrimonio') return 'contable';
+  if (String(c.codigo).startsWith('281')) return 'contable';
+  if (DINERO.includes(c.grupo) || String(c.codigo).startsWith('57') || String(c.codigo).startsWith('54')) return 'dinero';
+  return 'bien';
+}
+export const KIND_LABEL = { dinero: 'Bancos e inversiones', bien: 'Bienes', deuda: 'Deudas', gasto: 'Categorías de gasto', ingreso: 'Tipos de ingreso', contable: 'Cuentas contables' };
+export function displayGroup(c) {
+  if (!c) return '';
+  if (c.grupo === 'Tesorería') return 'Bancos y efectivo';
+  if (c.grupo === 'Inmovilizado') return 'Bienes';
+  return c.grupo || '';
+}
+// siguiente código libre dentro de un rango (para crear cuentas sin pensar en códigos)
+export function nextCode(cuentas, kind) {
+  const used = new Set(cuentas.map((c) => String(c.codigo)));
+  const ranges = { dinero: [5701, 5799], bien: [210, 219], deuda: [171, 179], gasto: [606, 699], ingreso: [708, 799], contable: [101, 199] };
+  const [a, b] = ranges[kind] || [900, 999];
+  for (let n = a; n <= b; n++) if (!used.has(String(n))) return String(n);
+  return String(Date.now()).slice(-6);
 }
 
 export function guessTipo(code) {

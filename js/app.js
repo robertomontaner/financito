@@ -1,11 +1,11 @@
 import { CONFIG } from './config.js';
 import { auth, AuthError, SheetsStore, LocalStore } from './store.js';
 import {
-  Libro, TABLES, CLASES, uid, round2, num, truthy, todayISO, ym, addMonths, eur, fmt, MESES, mesLargo, normDate, cuadroPrestamo, pad,
+  Libro, TABLES, CLASES, uid, round2, num, truthy, todayISO, ym, addMonths, eur, fmt, MESES, mesLargo, normDate, cuadroPrestamo, pad, kindOf, KIND_LABEL, displayGroup, nextCode,
 } from './model.js';
 
 // ---------------- estado y utilidades de UI ----------------
-const S = { store: null, libro: null, loading: false, mes: ym(todayISO()), year: Number(todayISO().slice(0, 4)), informe: 'pyg', apuntar: 'gasto', diario: { q: '', mes: '', cuenta: '', n: 80 } };
+const S = { store: null, libro: null, loading: false, mes: ym(todayISO()), year: Number(todayISO().slice(0, 4)), informe: 'pyg', periodo: 'mes', apuntar: 'gasto', diario: { q: '', mes: '', cuenta: '', n: 80 } };
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -35,14 +35,17 @@ function accountOptions(filter = () => true, selected = '') {
   const L = S.libro; const groups = {};
   for (const c of L.cuentas) {
     if (!filter(c) || (c.activa === 0 || c.activa === '0') && c.codigo !== String(selected)) continue;
-    (groups[c.grupo || 'Otras'] ??= []).push(c);
+    (groups[displayGroup(c) || 'Otras'] ??= []).push(c);
   }
-  return Object.entries(groups).map(([g, list]) => `<optgroup label="${esc(g)}">${list.map((c) => `<option value="${esc(c.codigo)}" ${String(selected) === c.codigo ? 'selected' : ''}>${esc(c.nombre)} · ${esc(c.codigo)}</option>`).join('')}</optgroup>`).join('');
+  return Object.entries(groups).map(([g, list]) => `<optgroup label="${esc(g)}">${list.map((c) => `<option value="${esc(c.codigo)}" ${String(selected) === c.codigo ? 'selected' : ''}>${esc(c.nombre)}${S.verCodigos ? ` · ${esc(c.codigo)}` : ''}</option>`).join('')}</optgroup>`).join('');
 }
 const isTes = (c) => c.grupo === 'Tesorería';
-const isPayer = (c) => c.tipo === 'activo' && ['Tesorería', 'Inversiones'].includes(c.grupo) || c.tipo === 'pasivo';
-const isGasto = (c) => c.tipo === 'gasto';
-const isIngreso = (c) => c.tipo === 'ingreso';
+const isMoney = (c) => kindOf(c) === 'dinero';
+const isPayer = (c) => isMoney(c) || kindOf(c) === 'deuda';
+// cuentas que usa Financito internamente (amortización, intereses, descuadres, revalorizaciones): fuera de las listas normales
+const SYS = new Set(['659', '662', '663', '681', '759', '763']);
+const isGasto = (c) => c.tipo === 'gasto' && !SYS.has(c.codigo);
+const isIngreso = (c) => c.tipo === 'ingreso' && !SYS.has(c.codigo);
 
 // ---------------- datos ----------------
 async function reload({ automations = false } = {}) {
@@ -56,7 +59,35 @@ async function reload({ automations = false } = {}) {
       S.libro.set(await S.store.load());
       S.autoMsg = `${rows.length} asiento${rows.length > 1 ? 's' : ''} automático${rows.length > 1 ? 's' : ''} generado${rows.length > 1 ? 's' : ''} (recurrentes, amortizaciones o préstamos).`;
     }
+    await migrar();
   }
+}
+
+async function setConfig(clave, valor) {
+  const row = (S.libro.db.Config || []).find((c) => c.clave === clave);
+  if (row) await S.store.update('Config', [{ ...row, valor }]); else await S.store.add('Config', [{ clave, valor }]);
+}
+
+// Arreglos de datos entre versiones (se ejecutan una sola vez)
+async function migrar() {
+  const L = S.libro;
+  // v2: los gastos importados de Notion pasan a su banco real (antes iban contra la cuenta puente 119)
+  const byName = Object.fromEntries(L.cuentas.map((c) => [c.nombre.toLowerCase(), c.codigo]));
+  const fixes = [];
+  for (const r of L.rows) {
+    if (r.haber !== '119') continue;
+    const m = String(r.notas || '').match(/^Pagado con (.+?)(?: · (.*))?$/);
+    const code = m && byName[m[1].trim().toLowerCase()];
+    if (code) fixes.push({ ...r, haber: code, notas: m[2] || '' });
+  }
+  const c119 = L.byCode['119'];
+  const rename = c119 && c119.nombre === 'Contrapartida histórico';
+  if (!fixes.length && !rename && num(L.config.version || 1) >= 2) return;
+  for (let i = 0; i < fixes.length; i += 200) await S.store.update('Diario', fixes.slice(i, i + 200));
+  if (rename) await S.store.update('Cuentas', [{ ...c119, nombre: 'Histórico sin cuenta' }]);
+  if (num(L.config.version || 1) < 2) await setConfig('version', '2');
+  S.libro.set(await S.store.load());
+  if (fixes.length) S.autoMsg = `He reorganizado ${fixes.length} movimientos importados para que salgan con su banco real (Revolut Ana → Súper…).`;
 }
 async function addRows(table, rows) { await S.store.add(table, rows); await reload(); }
 async function updateRows(table, rows) { await S.store.update(table, rows); await reload(); }
@@ -207,7 +238,7 @@ function viewInicio() {
   const g = L.gastoMes(mes); const gp = L.gastoMes(prev);
   const ingresos = L.ingresoMes(mes);
   const bal = L.balance(mes);
-  const tes = L.cuentas.filter((c) => (isTes(c) || c.grupo === 'Inversiones' || c.tipo === 'pasivo') && Math.abs(L.balanceToDate(c.codigo)) > 0.004);
+  const tes = L.inicio ? L.cuentas.filter((c) => (isMoney(c) || kindOf(c) === 'deuda') && Math.abs(L.balanceToDate(c.codigo)) > 0.004) : [];
   const sob = L.presupuesto(mes);
   const last = [...L.activeRows].sort((a, b) => (b.fecha + b.creado).localeCompare(a.fecha + a.creado)).slice(0, 6);
   const diff = g.total - gp.total;
@@ -220,20 +251,23 @@ function viewInicio() {
     <div class="kpis">
       <div class="kpi"><div class="lbl">Gasto corriente del mes</div><div class="val">${eur(g.total)}</div><div class="sub">${gp.total ? `${diff >= 0 ? '+' : ''}${eur(diff, 0)} vs ${MESES[Number(prev.slice(5)) - 1].toLowerCase()} (${eur(gp.total, 0)})` : 'sin imprevistos ni amortizaciones'}</div></div>
       <div class="kpi"><div class="lbl">Ingresos del mes</div><div class="val">${eur(ingresos, 0)}</div><div class="sub">Resultado: <span class="${cls(ingresos - g.total)}">${eur(round2(L.pyg(mes.slice(0, 4)).resultado[Number(mes.slice(5)) - 1]), 0)}</span></div></div>
-      <div class="kpi"><div class="lbl">Patrimonio neto</div><div class="val">${eur(bal.patrimonioNeto, 0)}</div><div class="sub">activo − deudas</div></div>
+      <div class="kpi"><div class="lbl">Patrimonio neto</div><div class="val">${L.inicio ? eur(bal.patrimonioNeto, 0) : '—'}</div><div class="sub">${L.inicio ? 'lo que tienes − lo que debes' : 'falta meter saldos iniciales'}</div></div>
     </div>
 
-    ${sob.length ? `<h2>Sobres de ${esc(MESES[Number(mes.slice(5)) - 1].toLowerCase())}</h2><div class="card">${sobresHtml(sob.slice(0, 6))}<div style="margin-top:8px"><a href="#/informes" data-inf="sobres" class="small">Ver todos los sobres →</a></div></div>` : ''}
+    ${sob.length ? `<h2>Presupuesto de ${esc(MESES[Number(mes.slice(5)) - 1].toLowerCase())}</h2><div class="card">${sobresHtml(sob.slice(0, 6))}<div style="margin-top:8px"><a href="#/informes" data-inf="sobres" class="small">Ver presupuesto completo →</a></div></div>` : ''}
 
     ${top.length ? `<h2>En qué se va este mes</h2><div class="card"><ul class="list">${top.map(([c, v]) => `<li><div class="grow"><div class="t">${esc(L.nombre(c))}</div><div class="bar"><span style="width:${Math.min(100, (v / (top[0][1] || 1)) * 100)}%"></span></div></div><div class="amount">${eur(v)}</div></li>`).join('')}</ul></div>` : ''}
 
-    <h2>Saldos</h2>
-    <div class="card"><ul class="list">${tes.map((c) => { const s = L.balanceToDate(c.codigo); return `<li><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="s">${esc(c.grupo)}</div></div><div class="amount ${s < 0 ? 'neg' : ''}">${eur(s)}</div></li>`; }).join('') || '<li class="muted">Sin cuentas</li>'}</ul></div>
+    <h2>Tus cuentas</h2>
+    ${L.inicio ? `<div class="card"><ul class="list">${tes.map((c) => { const s = L.balanceToDate(c.codigo); return `<li class="tap" data-cta="${esc(c.codigo)}"><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="s">${esc(displayGroup(c))}</div></div><div class="amount ${s < 0 ? 'neg' : ''}">${eur(s)}</div></li>`; }).join('') || '<li class="muted">Sin saldo en ninguna cuenta</li>'}</ul></div>`
+    : '<div class="card"><p style="margin:0 0 10px">Para ver cuánto tienes en cada banco, mete los saldos que tienes hoy (o el día que empieces a usar Financito).</p><button class="btn primary block" id="goap">Introducir saldos iniciales</button></div>'}
 
     <h2>Últimos movimientos</h2>
     <div class="card">${last.length ? `<ul class="list">${last.map((r) => rowItem(r)).join('')}</ul>` : '<div class="empty">Aún no hay movimientos. Pulsa <strong>+</strong> para apuntar el primero.</div>'}</div>
   `;
   $$('[data-inf]').forEach((a) => a.addEventListener('click', () => { S.informe = a.dataset.inf; }));
+  $$('[data-cta]').forEach((li) => { li.onclick = () => { S.diario = { ...S.diario, cuenta: li.dataset.cta, mes: '', q: '' }; location.hash = '#/diario'; }; });
+  $('#goap')?.addEventListener('click', apertura);
   bindRowItems();
   S.autoMsg = '';
 }
@@ -263,17 +297,17 @@ const PLANTILLAS = [
   ['gasto', 'Gasto'], ['ingreso', 'Ingreso'], ['traspaso', 'Traspaso'], ['activo', 'Compra de activo'], ['libre', 'Asiento libre'],
 ];
 function viewApuntar() {
-  const t = S.apuntar; const L = S.libro;
+  const t = S.apuntar; const L = S.libro; S.verCodigos = t === 'libre';
   const last = (k, def) => LS.get(`last_${t}_${k}`) || def;
   // cuenta de pago más usada en los últimos movimientos (si no, Mediolanum o la primera de tesorería)
   const freq = {}; L.activeRows.slice(-200).forEach((r) => { if (L.byCode[r.haber] && isTes(L.byCode[r.haber])) freq[r.haber] = (freq[r.haber] || 0) + 1; });
   const firstTes = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]?.[0] || (L.byCode['5721'] ? '5721' : L.cuentas.find(isTes)?.codigo || '');
   const flows = {
-    gasto: 'Sale de una cuenta tuya → va a una categoría de gasto (grupo 6).',
-    ingreso: 'Viene de una fuente de ingreso (grupo 7) → entra en una cuenta tuya.',
-    traspaso: 'Mueves dinero entre tus cuentas. No es gasto ni ingreso.',
-    activo: 'Compras algo que conserva valor (grupo 2 o inversiones). No es gasto; si lo amortizas, el gasto se reparte en meses.',
-    libre: 'Eliges tú la cuenta de debe y la de haber.',
+    gasto: 'Pagas algo desde uno de tus bancos.',
+    ingreso: 'Te entra dinero en uno de tus bancos (nómina, venta…).',
+    traspaso: 'Mueves dinero entre tus cuentas (reparto, ahorro a Trade Republic…). No es gasto ni ingreso.',
+    activo: 'Compras algo que conserva valor (piso, coche, patinete…). No cuenta como gasto; si lo amortizas, se reparte en meses.',
+    libre: 'Modo contable: eliges tú la cuenta de debe y la de haber.',
   };
   let body = '';
   const fecha = `<div class="field"><label class="lbl" for="f_fecha">Fecha</label><input type="date" id="f_fecha" name="fecha" value="${todayISO()}" required></div>`;
@@ -287,31 +321,30 @@ function viewApuntar() {
     if (!gastosCorr.length) gastosCorr.push(...L.cuentas.filter((c) => c.tipo === 'gasto' && c.activa !== 0).slice(0, 6));
     const defCat = last('debe', gastosCorr[0]?.codigo || '');
     body = `${importe}${concepto('Lidl, gasolina, cena…')}
-      <label class="lbl">Categoría</label>
-      <div class="quick" id="quick">${gastosCorr.map((c) => `<button type="button" data-v="${esc(c.codigo)}" class="${c.codigo === defCat ? 'on' : ''}">${esc(c.nombre)}</button>`).join('')}</div>
-      ${sel('debe', 'Cuenta de gasto', isGasto, defCat)}
-      ${sel('haber', 'Pagado con', isPayer, last('haber', firstTes))}
+      <div class="quick" id="quick" style="margin-top:0">${gastosCorr.map((c) => `<button type="button" data-v="${esc(c.codigo)}" class="${c.codigo === defCat ? 'on' : ''}">${esc(c.nombre)}</button>`).join('')}</div>
+      ${sel('debe', 'Categoría', isGasto, defCat)}
+      ${sel('haber', 'Pagado con', isMoney, last('haber', firstTes))}
       <div class="two">${fecha}<div class="field"><label class="lbl">&nbsp;</label><label class="check"><input type="checkbox" name="imprevisto"> Imprevisto</label></div></div>${notas}`;
   } else if (t === 'ingreso') {
     body = `${importe}${concepto('Nómina, comisión, venta…')}
       ${sel('haber', 'Tipo de ingreso', isIngreso, last('haber', L.accountsOf('ingreso')[0]?.codigo))}
-      ${sel('debe', 'Cobrado en', isPayer, last('debe', firstTes))}${fecha}${notas}`;
+      ${sel('debe', 'Cobrado en', isMoney, last('debe', firstTes))}${fecha}${notas}`;
   } else if (t === 'traspaso') {
-    const pay = (c) => c.tipo === 'activo' || c.tipo === 'pasivo';
+    const pay = isPayer;
     body = `${importe}${concepto('Reparto, ahorro, aportación…')}
       ${sel('haber', 'Desde', pay, last('haber', firstTes))}
       ${sel('debe', 'Hacia', pay, last('debe', L.cuentas.find((c) => c.codigo === '540')?.codigo || firstTes))}${fecha}${notas}`;
   } else if (t === 'activo') {
-    const act = (c) => c.tipo === 'activo' && !isTes(c) && c.codigo !== '281';
+    const act = (c) => kindOf(c) === 'bien';
     body = `${importe}${concepto('Patinete, impresora, entrada piso…')}
-      ${sel('debe', 'Qué es (cuenta de activo)', act, last('debe', '218'))}
-      ${sel('haber', 'Pagado con', isPayer, last('haber', firstTes))}${fecha}
+      ${sel('debe', 'Tipo de bien', act, last('debe', '218'))}
+      ${sel('haber', 'Pagado con', isMoney, last('haber', firstTes))}${fecha}
       <div class="field"><label class="check"><input type="checkbox" name="amortizar" id="f_amortizar"> Amortizar (repartir el gasto en el tiempo)</label></div>
       <div id="amortbox" hidden class="two"><div class="field"><label class="lbl">Vida útil (años)</label><input type="text" inputmode="decimal" name="vida" value="3"></div><div class="field"><label class="lbl">Valor residual €</label><input type="text" inputmode="decimal" name="residual" value="0"></div></div>${notas}`;
   } else {
     body = `${importe}${concepto('Concepto')}
-      ${sel('debe', 'Debe (recibe / se carga)', () => true, last('debe', ''))}
-      ${sel('haber', 'Haber (entrega / se abona)', () => true, last('haber', ''))}
+      ${sel('debe', 'Debe (recibe)', () => true, last('debe', ''))}
+      ${sel('haber', 'Haber (entrega)', () => true, last('haber', ''))}
       <div class="two">${fecha}<div class="field"><label class="lbl" for="f_clase">Clase</label><select id="f_clase" name="clase">${Object.entries(CLASES).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></div></div>${notas}`;
   }
 
@@ -356,8 +389,8 @@ function editEntry(id) {
     { key: 'fecha', label: 'Fecha', type: 'date', required: true },
     { key: 'concepto', label: 'Concepto' },
     { key: 'importe', label: 'Importe €', type: 'number', required: true },
-    { key: 'debe', label: 'Debe (va a)', type: 'select', options: (v) => accountOptions(all, v), required: true },
-    { key: 'haber', label: 'Haber (sale de)', type: 'select', options: (v) => accountOptions(all, v), required: true },
+    { key: 'debe', label: 'Va a (debe)', type: 'select', options: (v) => accountOptions(all, v), required: true },
+    { key: 'haber', label: 'Sale de (haber)', type: 'select', options: (v) => accountOptions(all, v), required: true },
     { key: 'clase', label: 'Clase', type: 'select', options: Object.entries(CLASES) },
     { key: 'notas', label: 'Notas', type: 'textarea' },
   ];
@@ -402,83 +435,120 @@ function viewDiario() {
 }
 
 // ---------------- INFORMES ----------------
-const INFORMES = [['pyg', 'PyG'], ['balance', 'Balance'], ['graficos', 'Gráficos'], ['sobres', 'Sobres'], ['cuadre', 'Cuadre']];
+const INFORMES = [['pyg', 'Ingresos y gastos'], ['balance', 'Patrimonio'], ['graficos', 'Gráficos'], ['sobres', 'Presupuesto'], ['cuadre', 'Comprobar bancos']];
 function viewInformes() {
   view().innerHTML = `<div class="seg">${INFORMES.map(([k, l]) => `<button data-i="${k}" class="${S.informe === k ? 'on' : ''}">${l}</button>`).join('')}</div><div id="inf" style="margin-top:14px"></div>`;
-  $$('.seg button').forEach((b) => { b.onclick = () => { S.informe = b.dataset.i; viewInformes(); }; });
+  $$('.seg button[data-i]').forEach((b) => { b.onclick = () => { S.informe = b.dataset.i; viewInformes(); }; });
   ({ pyg: infPyG, balance: infBalance, graficos: infGraficos, sobres: infSobres, cuadre: infCuadre })[S.informe]();
 }
-function yearNav(onChange) {
-  const years = [...new Set([...S.libro.activeRows.map((r) => Number(r.fecha.slice(0, 4))), Number(todayISO().slice(0, 4))])].sort();
-  const html = `<div class="monthnav"><button class="iconbtn" data-y="-1" aria-label="Año anterior">‹</button><strong>${S.year}</strong><button class="iconbtn" data-y="1" aria-label="Año siguiente">›</button></div>`;
-  setTimeout(() => $$('[data-y]').forEach((b) => { b.onclick = () => { const ny = S.year + Number(b.dataset.y); if (ny >= years[0] - 1 && ny <= years[years.length - 1] + 1) { S.year = ny; onChange(); } }; }), 0);
-  return html;
+
+// selector de periodo común: Mes / Año
+function periodBar(onChange, { allowYear = true } = {}) {
+  if (!allowYear) S.periodo = 'mes';
+  const isMes = S.periodo !== 'año';
+  const label = isMes ? mesLargo(S.mes) : String(S.year);
+  setTimeout(() => {
+    $$('[data-per]').forEach((b) => { b.onclick = () => { S.periodo = b.dataset.per; if (S.periodo === 'año') S.year = Number(S.mes.slice(0, 4)); onChange(); }; });
+    $$('[data-step]').forEach((b) => { b.onclick = () => { const k = Number(b.dataset.step); if (S.periodo === 'año') { S.year += k; S.mes = `${S.year}-${S.mes.slice(5)}`; } else { S.mes = addMonths(S.mes, k); S.year = Number(S.mes.slice(0, 4)); } onChange(); }; });
+    $('[data-hoy]')?.addEventListener('click', () => { S.mes = ym(todayISO()); S.year = Number(S.mes.slice(0, 4)); onChange(); });
+  }, 0);
+  const hoy = S.periodo === 'año' ? S.year !== Number(todayISO().slice(0, 4)) : S.mes !== ym(todayISO());
+  return `<div class="periodbar">
+    ${allowYear ? `<div class="seg mini"><button data-per="mes" class="${isMes ? 'on' : ''}">Mes</button><button data-per="año" class="${!isMes ? 'on' : ''}">Año</button></div>` : ''}
+    <div class="monthnav grow"><button class="iconbtn" data-step="-1" aria-label="Anterior">‹</button><strong>${esc(label)}</strong><button class="iconbtn" data-step="1" aria-label="Siguiente">›</button></div>
+    ${hoy ? '<button class="btn sm" data-hoy>Hoy</button>' : ''}
+  </div>`;
 }
 const cell = (v) => `<td class="n ${Math.abs(v) < 0.005 ? 'z' : ''}">${Math.abs(v) < 0.005 ? '–' : fmt(v, 0)}</td>`;
 const cellNeg = (v) => `<td class="n ${Math.abs(v) < 0.005 ? 'z' : cls(v)}">${Math.abs(v) < 0.005 ? '–' : fmt(v, 0)}</td>`;
+const cellDiff = (v, gasto = true) => `<td class="n ${Math.abs(v) < 0.5 ? 'z' : (gasto ? (v > 0 ? 'neg' : 'pos') : (v > 0 ? 'pos' : 'neg'))}">${Math.abs(v) < 0.5 ? '–' : `${v > 0 ? '+' : ''}${fmt(v, 0)}`}</td>`;
+const goAccount = (root) => $$('tr[data-acc]', root).forEach((tr) => { tr.onclick = () => { S.diario = { ...S.diario, cuenta: tr.dataset.acc, mes: S.periodo === 'año' ? '' : S.mes, q: '' }; location.hash = '#/diario'; }; });
 
 function infPyG() {
-  const L = S.libro; const p = L.pyg(S.year);
-  const cur = ym(todayISO());
-  const lastIdx = S.year < Number(cur.slice(0, 4)) ? 11 : S.year > Number(cur.slice(0, 4)) ? -1 : Number(cur.slice(5)) - 1;
-  const hasData = (i) => p.totalGastos[i] || p.totalIngresos[i];
-  const firstData = p.months.findIndex((_, i) => hasData(i));
-  const idx = p.months.map((_, i) => i).filter((i) => (firstData < 0 || i >= firstData) && (i <= Math.max(lastIdx, 0) || hasData(i)));
-  const head = `<tr><th>${S.year}</th>${idx.map((i) => `<th>${MESES[i]}</th>`).join('')}<th>Total</th></tr>`;
-  const line = (r) => `<tr class="tap" data-acc="${esc(r.code)}"><td title="${esc(r.code)}">${esc(r.nombre)}</td>${idx.map((i) => cell(r.values[i])).join('')}<td class="n"><strong>${fmt(r.total, 0)}</strong></td></tr>`;
-  const groupsOf = (list) => { const g = {}; list.forEach((r) => (g[r.grupo || 'Otros'] ??= []).push(r)); return g; };
-  let gastosHtml = '';
-  for (const [g, list] of Object.entries(groupsOf(p.gastos))) {
-    gastosHtml += list.map(line).join('');
-    if (list.length > 1) { const sums = idx.map((i) => list.reduce((s, r) => s + r.values[i], 0)); gastosHtml += `<tr class="sub dim"><td>Total ${esc(g.toLowerCase())}</td>${sums.map(cell).join('')}<td class="n">${fmt(list.reduce((s, r) => s + r.total, 0), 0)}</td></tr>`; }
+  const L = S.libro; const isMes = S.periodo !== 'año';
+  let cols; let diffAt = -1;
+  if (isMes) {
+    const m = S.mes; const p = addMonths(m, -1);
+    cols = [{ label: MESES[Number(m.slice(5)) - 1], from: m, to: m }, { label: MESES[Number(p.slice(5)) - 1], from: p, to: p }, { label: 'En el año', from: `${m.slice(0, 4)}-01`, to: m }];
+    diffAt = 1;
+  } else {
+    const cur = ym(todayISO());
+    const months = Array.from({ length: 12 }, (_, i) => `${S.year}-${pad(i + 1)}`);
+    const probe = L.pygCols(months.map((mm) => ({ from: mm, to: mm })));
+    const has = (i) => probe.totalGastos[i] || probe.totalIngresos[i];
+    const first = months.findIndex((_, i) => has(i));
+    const keep = months.filter((mm, i) => (first < 0 || i >= first) && (mm <= cur || has(i)));
+    cols = [...keep.map((mm) => ({ label: MESES[Number(mm.slice(5)) - 1], from: mm, to: mm })), { label: 'Total', from: `${S.year}-01`, to: `${S.year}-12`, total: true }];
   }
-  const resOrd = idx.map((i) => p.resultado[i] + p.imprevistos[i]);
-  view().querySelector('#inf').innerHTML = `${yearNav(infPyG)}
+  const p = L.pygCols(cols);
+  const n = cols.length + (diffAt >= 0 ? 1 : 0);
+  const head = `<tr><th></th>${cols.map((c, i) => `<th>${esc(c.label)}</th>${i === diffAt ? '<th>Dif.</th>' : ''}`).join('')}</tr>`;
+  const cellsOf = (values, render = cell, gasto = true) => values.map((v, i) => `${render(v)}${i === diffAt ? cellDiff(values[0] - values[1], gasto) : ''}`).join('');
+  const line = (r, gasto) => `<tr class="tap" data-acc="${esc(r.code)}"><td>${esc(r.nombre)}</td>${cellsOf(r.values, cell, gasto)}</tr>`;
+  const groups = {}; p.gastos.forEach((r) => (groups[r.grupo || 'Otros'] ??= []).push(r));
+  let gastosHtml = '';
+  for (const [g, list] of Object.entries(groups)) {
+    gastosHtml += list.map((r) => line(r, true)).join('');
+    if (list.length > 1 && Object.keys(groups).length > 1) gastosHtml += `<tr class="sub dim"><td>Total ${esc(g.toLowerCase())}</td>${cellsOf(cols.map((_, i) => list.reduce((s, r) => s + r.values[i], 0)))}</tr>`;
+  }
+  const empty = `<tr><td class="muted" colspan="${n + 1}">Nada en este periodo</td></tr>`;
+  $('#inf').innerHTML = `${periodBar(infPyG)}
+    ${isMes ? `<div class="kpis" style="margin-bottom:12px"><div class="kpi"><div class="lbl">Ahorro de ${esc(mesLargo(S.mes))}</div><div class="val ${cls(p.resultado[0])}">${eur(p.resultado[0], 0)}</div><div class="sub">ingresos − gastos</div></div><div class="kpi"><div class="lbl">Ingresos</div><div class="val">${eur(p.totalIngresos[0], 0)}</div></div><div class="kpi"><div class="lbl">Gastos</div><div class="val">${eur(p.totalGastos[0], 0)}</div><div class="sub">${p.imprevistos[0] ? `${eur(p.imprevistos[0], 0)} imprevistos` : 'sin imprevistos'}</div></div></div>` : ''}
     <div class="tablewrap"><table class="rep">${head}
-      <tr class="sec"><td colspan="${idx.length + 2}">Ingresos (grupo 7)</td></tr>
-      ${p.ingresos.map(line).join('') || `<tr><td class="muted">Sin ingresos</td><td colspan="${idx.length + 1}"></td></tr>`}
-      <tr class="sub"><td>Total ingresos</td>${idx.map((i) => cell(p.totalIngresos[i])).join('')}<td class="n">${fmt(p.totals.ingresos, 0)}</td></tr>
-      <tr class="sec"><td colspan="${idx.length + 2}">Gastos (grupo 6)</td></tr>
-      ${gastosHtml || `<tr><td class="muted">Sin gastos</td><td colspan="${idx.length + 1}"></td></tr>`}
-      <tr class="sub"><td>Total gastos</td>${idx.map((i) => cell(p.totalGastos[i])).join('')}<td class="n">${fmt(p.totals.gastos, 0)}</td></tr>
-      <tr class="dim"><td>· de los cuales imprevistos</td>${idx.map((i) => cell(p.imprevistos[i])).join('')}<td class="n">${fmt(p.totals.imprevistos, 0)}</td></tr>
-      <tr class="tot"><td>Resultado (ahorro)</td>${idx.map((i) => cellNeg(p.resultado[i])).join('')}<td class="n ${cls(p.totals.resultado)}">${fmt(p.totals.resultado, 0)}</td></tr>
-      <tr class="dim"><td>Resultado sin imprevistos</td>${resOrd.map(cellNeg).join('')}<td class="n">${fmt(p.totals.resultado + p.totals.imprevistos, 0)}</td></tr>
+      <tr class="sec"><td colspan="${n + 1}">Ingresos</td></tr>
+      ${p.ingresos.map((r) => line(r, false)).join('') || empty}
+      <tr class="sub"><td>Total ingresos</td>${cellsOf(p.totalIngresos, cell, false)}</tr>
+      <tr class="sec"><td colspan="${n + 1}">Gastos</td></tr>
+      ${gastosHtml || empty}
+      <tr class="sub"><td>Total gastos</td>${cellsOf(p.totalGastos)}</tr>
+      <tr class="dim"><td>· de ellos imprevistos</td>${cellsOf(p.imprevistos)}</tr>
+      <tr class="tot"><td>Ahorro (resultado)</td>${cellsOf(p.resultado, cellNeg, false)}</tr>
+      <tr class="dim"><td>Ahorro sin imprevistos</td>${cellsOf(p.resultado.map((v, i) => v + p.imprevistos[i]), cellNeg, false)}</tr>
     </table></div>
-    <p class="small muted">Toca una cuenta para ver sus movimientos. Los traspasos entre tus cuentas y las compras de activos no aparecen aquí: no son ingreso ni gasto.</p>`;
-  $$('#inf tr[data-acc]').forEach((tr) => { tr.onclick = () => { S.diario = { ...S.diario, cuenta: tr.dataset.acc, mes: '', q: '' }; location.hash = '#/diario'; }; });
+    <p class="small muted">Toca una línea para ver sus movimientos. Los traspasos entre tus cuentas y las compras de bienes (piso, coche…) no aparecen aquí porque no son ni ingreso ni gasto.</p>`;
+  goAccount($('#inf'));
+}
+
+function needsApertura() {
+  return `<div class="banner warn">Aún no has metido tus <strong>saldos iniciales</strong>. Sin ellos Financito no sabe cuánto dinero tienes, solo lo que entra y sale. <a href="#/ajustes" id="goap">Introducirlos →</a></div>`;
 }
 
 function infBalance() {
-  const L = S.libro; const cur = ym(todayISO());
-  const months = Array.from({ length: 12 }, (_, i) => `${S.year}-${pad(i + 1)}`).filter((m) => m <= cur);
-  const bals = months.map((m) => L.balance(m));
-  const target = bals[bals.length - 1];
-  if (!target) { $('#inf').innerHTML = `${yearNav(infBalance)}<div class="empty">Sin datos para ${S.year}.</div>`; return; }
-  const head = `<tr><th>${S.year}</th>${months.map((m) => `<th>${MESES[Number(m.slice(5)) - 1]}</th>`).join('')}</tr>`;
+  const L = S.libro; const cur = ym(todayISO()); const isMes = S.periodo !== 'año';
+  const start = L.inicio ? ym(L.inicio) : null;
+  let months;
+  if (isMes) months = [addMonths(S.mes, -1), S.mes];
+  else months = Array.from({ length: 12 }, (_, i) => `${S.year}-${pad(i + 1)}`).filter((m) => m <= cur);
+  if (start) months = months.filter((m) => m >= start);
+  const top = `${periodBar(infBalance)}${L.inicio ? '' : needsApertura()}`;
+  if (!months.length) { $('#inf').innerHTML = `${top}<div class="empty">Tus saldos empiezan en ${esc(mesLargo(start))}. Antes de esa fecha solo hay estadísticas de gastos.</div>`; return; }
+  const bals = months.map((m) => L.balance(m)); const target = bals[bals.length - 1];
+  const withDiff = isMes && bals.length === 2;
+  const head = `<tr><th></th>${months.map((m) => `<th>${isMes ? `fin ${MESES[Number(m.slice(5)) - 1].toLowerCase()}` : MESES[Number(m.slice(5)) - 1]}</th>`).join('')}${withDiff ? '<th>Variación</th>' : ''}</tr>`;
+  const n = months.length + (withDiff ? 1 : 0);
   const codesBy = (key) => { const set = new Map(); bals.forEach((b) => b[key].forEach((x) => set.set(x.code, x))); return [...set.values()].sort((a, b) => a.code.localeCompare(b.code)); };
-  const lineFor = (key, x) => `<tr class="tap" data-acc="${esc(x.code)}"><td>${esc(x.nombre)}</td>${bals.map((b) => cell(b[key].find((y) => y.code === x.code)?.saldo || 0)).join('')}</tr>`;
+  const valsOf = (key, code) => bals.map((b) => b[key].find((y) => y.code === code)?.saldo || 0);
+  const row = (label, vals, klass = '', acc = '') => `<tr class="${klass}${acc ? ' tap' : ''}" ${acc ? `data-acc="${esc(acc)}"` : ''}><td>${esc(label)}</td>${vals.map(cell).join('')}${withDiff ? cellDiff(vals[1] - vals[0], false) : ''}</tr>`;
   const section = (key, title) => {
-    const list = codesBy(key); const groups = {};
-    list.forEach((x) => (groups[x.grupo] ??= []).push(x));
-    return `<tr class="sec"><td colspan="${months.length + 1}">${title}</td></tr>${Object.entries(groups).map(([g, l]) => `${l.map((x) => lineFor(key, x)).join('')}${l.length > 1 ? `<tr class="sub dim"><td>${esc(g)}</td>${bals.map((b) => cell(b[key].filter((y) => y.grupo === g).reduce((s, y) => s + y.saldo, 0))).join('')}</tr>` : ''}`).join('')}`;
+    const list = codesBy(key).filter((x) => valsOf(key, x.code).some((v) => Math.abs(v) > 0.004)); const groups = {};
+    list.forEach((x) => (groups[displayGroup(L.byCode[x.code]) || x.grupo] ??= []).push(x));
+    if (!list.length) return '';
+    return `<tr class="sec"><td colspan="${n + 1}">${title}</td></tr>${Object.entries(groups).map(([g, l]) => `${l.map((x) => row(x.nombre, valsOf(key, x.code), '', x.code)).join('')}${l.length > 1 && Object.keys(groups).length > 1 ? row(`Total ${g.toLowerCase()}`, bals.map((b) => b[key].filter((y) => l.some((z) => z.code === y.code)).reduce((s, y) => s + y.saldo, 0)), 'sub dim') : ''}`).join('')}`;
   };
-  $('#inf').innerHTML = `${yearNav(infBalance)}
-    <div class="kpis" style="margin-bottom:12px"><div class="kpi"><div class="lbl">Patrimonio neto (${esc(MESES[Number(target.month.slice(5)) - 1])})</div><div class="val">${eur(target.patrimonioNeto, 0)}</div></div>
-    <div class="kpi"><div class="lbl">Activo</div><div class="val">${eur(target.totalActivo, 0)}</div></div><div class="kpi"><div class="lbl">Deudas</div><div class="val">${eur(target.totalPasivo, 0)}</div></div></div>
+  $('#inf').innerHTML = `${top}
+    <div class="kpis" style="margin-bottom:12px"><div class="kpi"><div class="lbl">Patrimonio neto · fin de ${esc(MESES[Number(target.month.slice(5)) - 1].toLowerCase())}</div><div class="val">${eur(target.patrimonioNeto, 0)}</div><div class="sub">${withDiff ? `${target.patrimonioNeto - bals[0].patrimonioNeto >= 0 ? '+' : ''}${eur(target.patrimonioNeto - bals[0].patrimonioNeto, 0)} en el mes` : 'lo que tienes − lo que debes'}</div></div>
+    <div class="kpi"><div class="lbl">Lo que tienes</div><div class="val">${eur(target.totalActivo, 0)}</div></div><div class="kpi"><div class="lbl">Lo que debes</div><div class="val">${eur(target.totalPasivo, 0)}</div></div></div>
     <div class="tablewrap"><table class="rep">${head}
-      ${section('activo', 'Activo')}
-      <tr class="sub"><td>Total activo</td>${bals.map((b) => cell(b.totalActivo)).join('')}</tr>
-      ${section('pasivo', 'Pasivo (deudas)')}
-      <tr class="sub"><td>Total pasivo</td>${bals.map((b) => cell(b.totalPasivo)).join('')}</tr>
-      ${section('pn', 'Patrimonio neto')}
-      <tr><td>Resultados acumulados</td>${bals.map((b) => cell(b.resultado)).join('')}</tr>
-      <tr class="sub"><td>Total patrimonio neto</td>${bals.map((b) => cell(b.totalPN)).join('')}</tr>
-      <tr class="tot"><td>Pasivo + PN</td>${bals.map((b) => cell(b.totalPasivo + b.totalPN)).join('')}</tr>
-      <tr class="dim"><td>¿Cuadra?</td>${bals.map((b) => `<td class="n">${Math.abs(b.descuadre) < 0.01 ? '✓' : `<span class="neg">${fmt(b.descuadre)}</span>`}</td>`).join('')}</tr>
+      ${section('activo', 'Lo que tienes (activo)')}
+      ${row('Total activo', bals.map((b) => b.totalActivo), 'sub')}
+      ${section('pasivo', 'Lo que debes (pasivo)')}
+      ${row('Total deudas', bals.map((b) => b.totalPasivo), 'sub')}
+      ${row('Patrimonio neto', bals.map((b) => b.patrimonioNeto), 'tot')}
+      <tr class="dim"><td>¿Cuadra la contabilidad?</td>${bals.map((b) => `<td class="n">${Math.abs(b.descuadre) < 0.01 ? '✓' : `<span class="neg">${fmt(b.descuadre)}</span>`}</td>`).join('')}${withDiff ? '<td></td>' : ''}</tr>
     </table></div>
-    <p class="small muted">Saldos a final de cada mes. «Cuadra» comprueba que activo = pasivo + patrimonio neto: siempre debería salir ✓ porque cada asiento tiene su contrapartida.</p>`;
-  $$('#inf tr[data-acc]').forEach((tr) => { tr.onclick = () => { S.diario = { ...S.diario, cuenta: tr.dataset.acc, mes: '', q: '' }; location.hash = '#/diario'; }; });
+    <p class="small muted">Saldos a final de mes${L.inicio ? `, contando desde tu apertura del ${esc(L.inicio)}` : ''}. La variación del patrimonio debería coincidir con tu ahorro del mes (más revalorizaciones).</p>`;
+  $('#goap')?.addEventListener('click', () => { setTimeout(apertura, 50); });
+  goAccount($('#inf'));
 }
 
 let chartLib = null;
@@ -489,18 +559,19 @@ async function loadChart() {
 }
 const PALETTE = ['#1d8a68', '#3a78c2', '#d08a2e', '#b4508f', '#7a5cc2', '#3ba3a3', '#c2553a', '#7d8a3a', '#8a6b4f', '#5a6b7d'];
 async function infGraficos() {
-  const L = S.libro; const year = S.year;
+  const L = S.libro; const isMes = S.periodo !== 'año';
+  const year = isMes ? Number(S.mes.slice(0, 4)) : S.year;
   const months = Array.from({ length: 12 }, (_, i) => `${year}-${pad(i + 1)}`);
   const cur = ym(todayISO());
   const showMonths = months.filter((m) => m <= cur || L.activeRows.some((r) => ym(r.fecha) === m));
   const data = showMonths.map((m) => L.gastoMes(m));
   const cats = [...new Set(data.flatMap((d) => Object.keys(d.porCuenta)))].sort();
-  const mesSel = showMonths.includes(S.mes) ? S.mes : showMonths[showMonths.length - 1] || cur;
-  $('#inf').innerHTML = `${yearNav(infGraficos)}
-    <div class="card"><h3>Gasto corriente por mes</h3><div class="chartbox"><canvas id="c1"></canvas></div><p class="small muted">Sin imprevistos ni amortizaciones.</p></div>
-    <div class="card"><div class="row between"><h3>Reparto del mes</h3><select id="ms" style="width:auto;min-height:36px;padding:6px 10px">${showMonths.map((m) => `<option value="${m}" ${m === mesSel ? 'selected' : ''}>${esc(mesLargo(m))}</option>`).join('')}</select></div><div class="chartbox"><canvas id="c2"></canvas></div></div>
-    <div class="card"><h3>Ingresos vs gastos</h3><div class="chartbox"><canvas id="c3"></canvas></div></div>
-    <div class="card"><h3>Patrimonio neto</h3><div class="chartbox"><canvas id="c4"></canvas></div></div>`;
+  const mesSel = isMes ? S.mes : (showMonths[showMonths.length - 1] || cur);
+  $('#inf').innerHTML = `${periodBar(infGraficos)}
+    <div class="card"><h3>En qué se fue ${esc(mesLargo(mesSel))}</h3><div class="chartbox"><canvas id="c2"></canvas></div><p class="small muted">Incluye imprevistos.</p></div>
+    <div class="card"><h3>Gasto corriente por mes · ${year}</h3><div class="chartbox"><canvas id="c1"></canvas></div><p class="small muted">Sin imprevistos ni amortizaciones.</p></div>
+    <div class="card"><h3>Ingresos vs gastos · ${year}</h3><div class="chartbox"><canvas id="c3"></canvas></div></div>
+    ${L.inicio ? `<div class="card"><h3>Patrimonio neto · ${year}</h3><div class="chartbox"><canvas id="c4"></canvas></div></div>` : ''}`;
   let Chart;
   try { Chart = await loadChart(); } catch { $('#inf').insertAdjacentHTML('afterbegin', '<div class="banner warn">No se pudo cargar la librería de gráficos (¿sin conexión?).</div>'); return; }
   const dark = matchMedia('(prefers-color-scheme: dark)').matches;
@@ -509,43 +580,51 @@ async function infGraficos() {
   Chart.defaults.font.family = 'system-ui, sans-serif';
   const labels = showMonths.map((m) => MESES[Number(m.slice(5)) - 1]);
   const money = { callbacks: { label: (c) => `${c.dataset.label || c.label}: ${eur(c.parsed.y ?? c.parsed)}` } };
+  const axis = { ticks: { callback: (v) => `${fmt(v, 0)} €` } };
   S.charts?.forEach((c) => c.destroy()); S.charts = [];
-  S.charts.push(new Chart($('#c1'), { type: 'bar', data: { labels, datasets: cats.map((c, i) => ({ label: L.nombre(c), data: data.map((d) => d.porCuenta[c] || 0), backgroundColor: PALETTE[i % PALETTE.length], borderRadius: 3 })) }, options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } }, tooltip: money }, scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, ticks: { callback: (v) => `${fmt(v, 0)} €` } } } } }));
-  const drawDonut = (m) => {
-    const d = L.gastoMes(m, { incluirImprevistos: true }); const entries = Object.entries(d.porCuenta).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-    S.charts[1]?.destroy();
-    S.charts[1] = new Chart($('#c2'), { type: 'doughnut', data: { labels: entries.map(([c]) => L.nombre(c)), datasets: [{ data: entries.map(([, v]) => v), backgroundColor: entries.map((_, i) => PALETTE[i % PALETTE.length]), borderWidth: 0 }] }, options: { maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'right', labels: { boxWidth: 10 } }, tooltip: { callbacks: { label: (c) => `${c.label}: ${eur(c.parsed)}` } } } } });
-  };
-  drawDonut(mesSel);
-  $('#ms').onchange = (e) => { S.mes = e.target.value; drawDonut(S.mes); };
+  const d = L.gastoMes(mesSel, { incluirImprevistos: true }); const entries = Object.entries(d.porCuenta).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  S.charts.push(new Chart($('#c2'), { type: 'doughnut', data: { labels: entries.map(([c]) => L.nombre(c)), datasets: [{ data: entries.map(([, v]) => v), backgroundColor: entries.map((_, i) => PALETTE[i % PALETTE.length]), borderWidth: 0 }] }, options: { maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'right', labels: { boxWidth: 10 } }, tooltip: { callbacks: { label: (c) => `${c.label}: ${eur(c.parsed)}` } } } } }));
+  S.charts.push(new Chart($('#c1'), { type: 'bar', data: { labels, datasets: cats.map((c, i) => ({ label: L.nombre(c), data: data.map((x) => x.porCuenta[c] || 0), backgroundColor: PALETTE[i % PALETTE.length], borderRadius: 3 })) }, options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } }, tooltip: money }, scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, ...axis } } } }));
   const p = L.pyg(year); const idx = showMonths.map((m) => Number(m.slice(5)) - 1);
-  S.charts.push(new Chart($('#c3'), { type: 'bar', data: { labels, datasets: [{ label: 'Ingresos', data: idx.map((i) => p.totalIngresos[i]), backgroundColor: '#1d8a68', borderRadius: 3 }, { label: 'Gastos', data: idx.map((i) => p.totalGastos[i]), backgroundColor: '#c2553a', borderRadius: 3 }] }, options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } }, tooltip: money }, scales: { x: { grid: { display: false } }, y: { ticks: { callback: (v) => `${fmt(v, 0)} €` } } } } }));
-  S.charts.push(new Chart($('#c4'), { type: 'line', data: { labels, datasets: [{ label: 'Patrimonio neto', data: showMonths.map((m) => L.balance(m).patrimonioNeto), borderColor: '#3a78c2', backgroundColor: 'rgba(58,120,194,.12)', fill: true, tension: 0.25, pointRadius: 3 }] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: money }, scales: { x: { grid: { display: false } }, y: { ticks: { callback: (v) => `${fmt(v, 0)} €` } } } } }));
+  S.charts.push(new Chart($('#c3'), { type: 'bar', data: { labels, datasets: [{ label: 'Ingresos', data: idx.map((i) => p.totalIngresos[i]), backgroundColor: '#1d8a68', borderRadius: 3 }, { label: 'Gastos', data: idx.map((i) => p.totalGastos[i]), backgroundColor: '#c2553a', borderRadius: 3 }] }, options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } }, tooltip: money }, scales: { x: { grid: { display: false } }, y: axis } } }));
+  if (L.inicio) {
+    const pm = showMonths.filter((m) => m >= ym(L.inicio));
+    S.charts.push(new Chart($('#c4'), { type: 'line', data: { labels: pm.map((m) => MESES[Number(m.slice(5)) - 1]), datasets: [{ label: 'Patrimonio neto', data: pm.map((m) => L.balance(m).patrimonioNeto), borderColor: '#3a78c2', backgroundColor: 'rgba(58,120,194,.12)', fill: true, tension: 0.25, pointRadius: 3 }] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: money }, scales: { x: { grid: { display: false } }, y: axis } } }));
+  }
 }
 
+// ---------- presupuesto ----------
 function infSobres() {
   const L = S.libro; const m = S.mes;
   const list = L.presupuesto(m);
-  const tot = list.filter((p) => L.tipo(p.code) === 'gasto').reduce((a, p) => ({ asig: a.asig + p.asignado, real: a.real + p.real }), { asig: 0, real: 0 });
-  $('#inf').innerHTML = `<div class="monthnav"><button class="iconbtn" id="pm">‹</button><strong>${esc(mesLargo(m))}</strong><button class="iconbtn" id="nm">›</button></div>
-    ${tot.asig ? `<div class="kpis" style="grid-template-columns:1fr 1fr;margin-bottom:12px"><div class="kpi"><div class="lbl">Asignado a categorías</div><div class="val">${eur(tot.asig, 0)}</div></div><div class="kpi"><div class="lbl">Gastado</div><div class="val ${tot.real > tot.asig ? 'neg' : ''}">${eur(tot.real, 0)}</div></div></div>` : ''}
-    <div class="card">${list.length ? sobresHtml(list) : '<div class="empty">Sin sobres este mes. Un sobre es lo que te asignas para una categoría (p. ej. Súper 150 €) o para gastar desde un banco (p. ej. Revolut Ana 200 €).</div>'}
-    <button class="btn block" id="add" style="margin-top:10px">Añadir sobre</button></div>
-    <p class="small muted">No cuentan imprevistos ni amortizaciones. Un sobre de banco mide lo gastado pagando desde ese banco.</p>`;
-  $('#pm').onclick = () => { S.mes = addMonths(m, -1); infSobres(); };
-  $('#nm').onclick = () => { S.mes = addMonths(m, 1); infSobres(); };
-  $('#add').onclick = () => editSobre(null);
+  const cats = list.filter((p) => L.kind(p.code) === 'gasto');
+  const banks = list.filter((p) => L.kind(p.code) !== 'gasto');
+  const tot = cats.reduce((a, p) => ({ asig: a.asig + p.asignado, real: a.real + p.real }), { asig: 0, real: 0 });
+  $('#inf').innerHTML = `${periodBar(infSobres, { allowYear: false })}
+    <h2 style="margin-top:4px">Límite por categoría</h2>
+    <p class="small muted" style="margin-top:-6px">Cuánto quieres gastar como máximo en cada cosa al mes, la pagues desde donde la pagues.</p>
+    ${tot.asig ? `<div class="kpis duo" style="margin-bottom:10px"><div class="kpi"><div class="lbl">Límite total</div><div class="val">${eur(tot.asig, 0)}</div></div><div class="kpi"><div class="lbl">Gastado</div><div class="val ${tot.real > tot.asig ? 'neg' : ''}">${eur(tot.real, 0)}</div></div></div>` : ''}
+    <div class="card">${cats.length ? sobresHtml(cats) : '<div class="empty">Sin límites. Ej.: «Súper y casa: 300 € al mes».</div>'}
+      <button class="btn block" id="addcat" style="margin-top:10px">Añadir límite de categoría</button></div>
+    <h2>Dinero para gastar en cada cuenta</h2>
+    <p class="small muted" style="margin-top:-6px">Tu sistema de sobres: lo que metes cada mes en una cuenta para gastar (p. ej. Revolut Ana 200 €). Mide lo que gastas pagando desde ella.</p>
+    <div class="card">${banks.length ? sobresHtml(banks) : '<div class="empty">Sin cuentas con dinero asignado.</div>'}
+      <button class="btn block" id="addbank" style="margin-top:10px">Asignar dinero a una cuenta</button></div>
+    <p class="small muted">No cuentan los imprevistos ni las amortizaciones.</p>`;
+  $('#addcat').onclick = () => editSobre(null, 'gasto');
+  $('#addbank').onclick = () => editSobre(null, 'dinero');
   bindRowItems($('#inf'));
 }
-function editSobre(id) {
+function editSobre(id, kind) {
   const L = S.libro; const p = (L.db.Presupuesto || []).find((x) => String(x.id) === String(id));
+  const k = p ? (L.kind(String(p.cuenta)) === 'gasto' ? 'gasto' : 'dinero') : kind;
   const fields = [
-    { key: 'cuenta', label: 'Categoría o banco', type: 'select', options: (v) => accountOptions((c) => c.tipo === 'gasto' || isTes(c), v), required: true },
-    { key: 'importe', label: 'Importe mensual €', type: 'number', required: true },
-    { key: 'ambito', label: 'Se aplica a', type: 'select', options: [['*', 'Todos los meses'], ['mes', `Solo ${mesLargo(S.mes)}`]] },
+    { key: 'cuenta', label: k === 'gasto' ? 'Categoría' : 'Cuenta', type: 'select', options: (v) => accountOptions((c) => kindOf(c) === k && (k === 'gasto' || c.grupo === 'Tesorería'), v), required: true },
+    { key: 'importe', label: k === 'gasto' ? 'Límite mensual €' : 'Dinero asignado al mes €', type: 'number', required: true },
+    { key: 'ambito', label: 'Para', type: 'select', options: [['*', 'Todos los meses'], ['mes', `Solo ${mesLargo(S.mes)}`]] },
   ];
   formModal({
-    title: p ? 'Editar sobre' : 'Nuevo sobre', fields, values: p ? { ...p, ambito: p.mes === '*' ? '*' : 'mes' } : { ambito: '*' },
+    title: p ? 'Editar' : (k === 'gasto' ? 'Nuevo límite de categoría' : 'Asignar dinero a una cuenta'), fields, values: p ? { ...p, ambito: p.mes === '*' ? '*' : 'mes' } : { ambito: '*' },
     onSave: async (d) => {
       const row = { id: p?.id || uid(), cuenta: d.cuenta, importe: d.importe, mes: d.ambito === '*' ? '*' : (p && p.mes !== '*' ? p.mes : S.mes), borrado: '' };
       if (p) await updateRows('Presupuesto', [{ ...p, ...row }]); else await addRows('Presupuesto', [row]);
@@ -554,36 +633,44 @@ function editSobre(id) {
   });
 }
 
+// ---------- comprobar con el banco ----------
 function infCuadre() {
   const L = S.libro; const fecha = todayISO();
-  const accs = L.cuentas.filter((c) => (isTes(c) || c.grupo === 'Inversiones' || c.tipo === 'pasivo') && (c.activa !== 0 || L.balanceToDate(c.codigo)));
+  if (!L.inicio) { $('#inf').innerHTML = `${needsApertura()}<p class="muted">Cuando metas los saldos iniciales podrás comprobar aquí, cuenta por cuenta, que lo que dice Financito coincide con lo que tienes de verdad en el banco.</p>`; $('#goap')?.addEventListener('click', () => setTimeout(apertura, 50)); return; }
+  const accs = L.cuentas.filter((c) => kindOf(c) === 'dinero' && (c.activa !== 0 || L.balanceToDate(c.codigo)));
   const lastReal = (code) => (L.db.Saldos || []).filter((s) => String(s.cuenta) === code).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0];
-  $('#inf').innerHTML = `<p class="small muted" style="margin-top:0">Escribe el saldo real que te dice cada banco hoy. Si no coincide con el libro, se te ha escapado algún movimiento: búscalo, o crea un ajuste para dejarlo cuadrado.</p>
-    <div class="card"><ul class="list">${accs.map((c) => { const lib = L.balanceToDate(c.codigo, fecha); const lr = lastReal(c.codigo); return `<li style="flex-wrap:wrap"><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="s">Libro: ${eur(lib)}${lr ? ` · último real ${eur(num(lr.saldo))} (${esc(normDate(lr.fecha))})` : ''}</div></div>
-      <input type="text" inputmode="decimal" data-real="${esc(c.codigo)}" placeholder="Saldo real" style="width:130px;min-height:38px;padding:7px 10px;text-align:right">
-      <div data-diff="${esc(c.codigo)}" class="small" style="width:100%;text-align:right"></div></li>`; }).join('')}</ul></div>`;
+  $('#inf').innerHTML = `<div class="card" style="margin-bottom:12px"><strong>¿Cómo funciona?</strong><ol class="small" style="margin:6px 0 0;padding-left:18px"><li>Abre la app de tu banco y mira cuánto tienes ahora.</li><li>Escríbelo en su cuenta, abajo.</li><li>Si no coincide con Financito, te falta algún movimiento por apuntar.</li></ol></div>
+    <div class="card"><ul class="list">${accs.map((c) => { const lib = L.balanceToDate(c.codigo, fecha); const lr = lastReal(c.codigo); return `<li style="flex-wrap:wrap"><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="s">Según Financito: <strong>${eur(lib)}</strong>${lr ? ` · comprobado el ${esc(normDate(lr.fecha))}` : ''}</div></div>
+      <input type="text" inputmode="decimal" data-real="${esc(c.codigo)}" placeholder="En tu banco" aria-label="Saldo en tu banco de ${esc(c.nombre)}" style="width:130px;min-height:38px;padding:7px 10px;text-align:right">
+      <div data-diff="${esc(c.codigo)}" class="small" style="width:100%"></div></li>`; }).join('')}</ul></div>`;
   $$('[data-real]').forEach((inp) => {
     inp.oninput = () => {
-      const code = inp.dataset.real; const box = $(`[data-diff="${code}"]`);
+      const code = inp.dataset.real; const box = $(`[data-diff="${code}"]`); const inv = L.byCode[code]?.grupo === 'Inversiones';
       if (!inp.value.trim()) { box.innerHTML = ''; return; }
       const real = num(inp.value); const lib = L.balanceToDate(code, fecha); const d = round2(real - lib);
-      box.innerHTML = Math.abs(d) < 0.01 ? '<span class="pos">✓ Cuadra</span>' : `<span class="${d < 0 ? 'neg' : 'pos'}">Diferencia ${d > 0 ? '+' : ''}${eur(d)}</span> <button class="btn sm" data-adj="${esc(code)}">Ajustar</button> <button class="btn sm" data-save="${esc(code)}">Solo guardar</button>`;
+      if (Math.abs(d) < 0.01) { box.innerHTML = `<div class="row between" style="margin-top:6px"><span class="pos">✓ Cuadra</span><button class="btn sm" data-save="${esc(code)}">Marcar comprobado</button></div>`; }
+      else {
+        const msg = inv ? (d > 0 ? `Tu inversión vale ${eur(d)} más que lo apuntado (ha subido).` : `Tu inversión vale ${eur(-d)} menos que lo apuntado (ha bajado).`)
+          : (d < 0 ? `En el banco hay ${eur(-d)} menos: probablemente falta apuntar algún gasto.` : `En el banco hay ${eur(d)} más: probablemente falta apuntar algún ingreso.`);
+        box.innerHTML = `<div class="banner ${inv ? '' : 'warn'}" style="margin:8px 0 6px">${esc(msg)}</div><div class="row wrap">
+          ${inv ? '' : `<button class="btn sm" data-ver="${esc(code)}">Ver movimientos</button>`}
+          <button class="btn sm ${inv ? 'primary' : ''}" data-adj="${esc(code)}">${inv ? 'Actualizar valor' : 'Dar por buena la diferencia'}</button></div>`;
+      }
       $(`[data-adj="${code}"]`, box)?.addEventListener('click', () => ajustar(code, real, d));
-      $(`[data-save="${code}"]`, box)?.addEventListener('click', async () => { try { await addRows('Saldos', [{ id: uid(), fecha, cuenta: code, saldo: real, notas: '' }]); toast('Saldo guardado'); infCuadre(); } catch (e) { fail(e); } });
+      $(`[data-ver="${code}"]`, box)?.addEventListener('click', () => { S.diario = { ...S.diario, cuenta: code, mes: '', q: '' }; location.hash = '#/diario'; });
+      $(`[data-save="${code}"]`, box)?.addEventListener('click', async () => { try { await addRows('Saldos', [{ id: uid(), fecha, cuenta: code, saldo: real, notas: '' }]); toast('Comprobado'); infCuadre(); } catch (e) { fail(e); } });
     };
   });
 }
 async function ajustar(code, real, d) {
-  const L = S.libro; const inv = L.byCode[code]?.grupo === 'Inversiones'; const pasivo = L.tipo(code) === 'pasivo';
-  // d>0: hay más dinero real que en el libro
-  let debe; let haber;
-  if (pasivo) { [debe, haber] = d > 0 ? ['659', code] : [code, '759']; } else if (inv) { [debe, haber] = d > 0 ? [code, '763'] : ['663', code]; } else { [debe, haber] = d > 0 ? [code, '759'] : ['659', code]; }
-  const msg = inv ? `Registrar ${d > 0 ? 'ganancia' : 'pérdida'} de valor de ${eur(Math.abs(d))} en ${L.nombre(code)}?` : `Crear un ajuste de ${eur(Math.abs(d))} en ${L.nombre(code)}? Mejor si antes buscas el movimiento que falta.`;
+  const L = S.libro; const inv = L.byCode[code]?.grupo === 'Inversiones';
+  const [debe, haber] = inv ? (d > 0 ? [code, '763'] : ['663', code]) : (d > 0 ? [code, '759'] : ['659', code]);
+  const msg = inv ? `Registrar que ${L.nombre(code)} ha ${d > 0 ? 'ganado' : 'perdido'} ${eur(Math.abs(d))} de valor?` : `Se apuntará un descuadre de ${eur(Math.abs(d))} en ${L.nombre(code)} para que cuadre. Mejor si antes buscas el movimiento que falta. ¿Seguir?`;
   if (!confirm(msg)) return;
   try {
-    await S.store.add('Diario', [newEntry({ fecha: todayISO(), concepto: inv ? `Revalorización ${L.nombre(code)}` : `Ajuste de cuadre ${L.nombre(code)}`, debe, haber, importe: Math.abs(d), clase: 'ajuste' })]);
-    await S.store.add('Saldos', [{ id: uid(), fecha: todayISO(), cuenta: code, saldo: real, notas: 'ajustado' }]);
-    await reload(); toast('Ajuste creado'); infCuadre();
+    await S.store.add('Diario', [newEntry({ fecha: todayISO(), concepto: inv ? `Revalorización ${L.nombre(code)}` : `Descuadre ${L.nombre(code)}`, debe, haber, importe: Math.abs(d), clase: 'ajuste' })]);
+    await S.store.add('Saldos', [{ id: uid(), fecha: todayISO(), cuenta: code, saldo: real, notas: inv ? 'revalorización' : 'ajustado' }]);
+    await reload(); toast(inv ? 'Valor actualizado' : 'Diferencia apuntada'); infCuadre();
   } catch (e) { fail(e); }
 }
 
@@ -593,15 +680,28 @@ function viewAjustes() {
   const rec = (L.db.Recurrentes || []).filter((r) => r.nombre);
   const act = (L.db.Activos || []).filter((a) => a.nombre);
   const pre = (L.db.Prestamos || []).filter((p) => p.nombre);
-  const groups = {}; L.cuentas.forEach((c) => (groups[c.grupo || 'Otras'] ??= []).push(c));
+  const groups = {}; L.cuentas.forEach((c) => (groups[KIND_LABEL[kindOf(c)]] ??= []).push(c));
+  const listOf = (kinds) => L.cuentas.filter((c) => kinds.includes(kindOf(c)) && !SYS.has(c.codigo)).sort((a, b) => kinds.indexOf(kindOf(a)) - kinds.indexOf(kindOf(b)));
+  const accLi = (c, saldo) => `<li class="tap" data-acc="${esc(c.codigo)}"><div class="grow"><div class="t">${esc(c.nombre)}${c.activa === 0 || c.activa === '0' ? ' <span class="chip">oculta</span>' : ''}</div><div class="s">${esc(displayGroup(c))}</div></div>${saldo && L.inicio ? `<div class="amount">${eur(L.balanceToDate(c.codigo))}</div>` : ''}</li>`;
   view().innerHTML = `
-    <h2 style="margin-top:4px">Automatizaciones mensuales</h2>
+    <h2 style="margin-top:4px">Mis cuentas</h2>
+    <div class="card"><p class="small muted" style="margin-top:0">Donde tienes (o debes) el dinero: bancos, efectivo, inversiones, bienes y deudas.</p>
+      <ul class="list">${listOf(['dinero', 'bien', 'deuda']).map((c) => accLi(c, true)).join('')}</ul>
+      <div class="row wrap" style="margin-top:8px"><button class="btn sm" data-new="dinero">+ Banco o inversión</button><button class="btn sm" data-new="bien">+ Bien</button><button class="btn sm" data-new="deuda">+ Deuda</button></div></div>
+
+    <h2>Categorías</h2>
+    <div class="card"><h3 style="margin-top:0">De gasto</h3><ul class="list">${listOf(['gasto']).map((c) => accLi(c)).join('')}</ul>
+      <button class="btn sm" data-new="gasto" style="margin-top:8px">+ Categoría de gasto</button>
+      <h3>De ingreso</h3><ul class="list">${listOf(['ingreso']).map((c) => accLi(c)).join('')}</ul>
+      <button class="btn sm" data-new="ingreso" style="margin-top:8px">+ Tipo de ingreso</button></div>
+
+    <h2>Automatizaciones mensuales</h2>
     <div class="card"><ul class="list">${rec.map((r) => `<li class="tap" data-rec="${esc(r.id)}"><div class="grow"><div class="t">${esc(r.nombre)}</div><div class="s">Día ${esc(r.dia)} · ${esc(L.nombre(String(r.haber)))} → ${esc(L.nombre(String(r.debe)))} · desde ${esc(r.desde)}${r.hasta ? ` hasta ${esc(r.hasta)}` : ''}</div></div><div class="amount">${eur(num(r.importe))}</div><span class="chip">${truthy(r.activo) ? 'activa' : 'pausada'}</span></li>`).join('') || '<li class="muted">Ninguna</li>'}</ul>
       <button class="btn block" id="addrec" style="margin-top:8px">Añadir automatización</button>
       <p class="small muted">Cada mes, al abrir la app, se apuntan solas las que toquen. Si borras una generada, no se vuelve a crear.</p></div>
 
     <h2>Activos que se amortizan</h2>
-    <div class="card"><ul class="list">${act.map((a) => { const am = L.activeRows.filter((r) => r.origen?.startsWith(`amort:${a.id}:`)).reduce((s, r) => s + r.importe, 0); return `<li class="tap" data-act="${esc(a.id)}"><div class="grow"><div class="t">${esc(a.nombre)}</div><div class="s">${eur(num(a.valor))} · ${Math.round(num(a.vida_meses) / 12 * 10) / 10} años · amortizado ${eur(am)}</div><div class="bar"><span style="width:${Math.min(100, am / Math.max(1, num(a.valor) - num(a.residual)) * 100)}%"></span></div></div></li>`; }).join('') || '<li class="muted">Ninguno. Se crean al apuntar una «Compra de activo» con «Amortizar» marcado.</li>'}</ul>
+    <div class="card"><ul class="list">${act.map((a) => { const am = L.activeRows.filter((r) => r.origen?.startsWith(`amort:${a.id}:`)).reduce((s, r) => s + r.importe, 0); return `<li class="tap" data-act="${esc(a.id)}"><div class="grow"><div class="t">${esc(a.nombre)}</div><div class="s">${eur(num(a.valor))} · ${Math.round(num(a.vida_meses) / 12 * 10) / 10} años · amortizado ${eur(am)}</div><div class="bar"><span style="width:${Math.min(100, am / Math.max(1, num(a.valor) - num(a.residual)) * 100)}%"></span></div></div></li>`; }).join('') || '<li class="muted">Ninguno. Se crean al apuntar una «Compra de activo» marcando «Amortizar».</li>'}</ul>
       <button class="btn block" id="addact" style="margin-top:8px">Añadir activo</button></div>
 
     <h2>Hipoteca y préstamos</h2>
@@ -609,12 +709,14 @@ function viewAjustes() {
       <button class="btn block" id="addpre" style="margin-top:8px">Añadir hipoteca o préstamo</button>
       <p class="small muted">Cada cuota se apunta sola separando intereses (gasto 662) y capital (baja la deuda 170).</p></div>
 
-    <h2>Plan de cuentas</h2>
-    <details class="card"><summary>${L.cuentas.length} cuentas · tocar para ver y editar</summary>${Object.entries(groups).map(([g, list]) => `<h3>${esc(g)}</h3><ul class="list">${list.map((c) => `<li class="tap" data-acc="${esc(c.codigo)}"><div class="grow"><div class="t">${esc(c.nombre)}${c.activa === 0 || c.activa === '0' ? ' <span class="chip">oculta</span>' : ''}</div><div class="s">${esc(c.codigo)} · ${esc(c.tipo)}</div></div></li>`).join('')}</ul>`).join('')}
-      <button class="btn block" id="addacc" style="margin-top:8px">Añadir cuenta</button></details>
-
     <h2>Saldos iniciales</h2>
-    <div class="card"><p class="small muted" style="margin-top:0">El asiento de apertura: lo que tienes en cada cuenta (y lo que debes) el día que empiezas. Va contra «100 Patrimonio inicial».</p><button class="btn block" id="apertura">Introducir saldos iniciales</button></div>
+    <div class="card"><p class="small muted" style="margin-top:0">${L.inicio ? `Tus saldos se cuentan desde el <strong>${esc(L.inicio)}</strong>. Los movimientos anteriores solo cuentan para las estadísticas de gasto.` : 'Lo que tienes en cada banco (y lo que debes) el día que empiezas a usar Financito. Sin esto, la app no sabe cuánto dinero tienes.'}</p><button class="btn block ${L.inicio ? '' : 'primary'}" id="apertura">${L.inicio ? 'Añadir o corregir saldos iniciales' : 'Introducir saldos iniciales'}</button></div>
+
+    <h2>Avanzado</h2>
+    <details class="card"><summary>Plan contable completo (${L.cuentas.length} cuentas con su código)</summary>
+      <p class="small muted">Así guarda Financito todo por debajo, con la numeración del Plan General Contable: 2 bienes, 5 bancos e inversiones, 6 gastos, 7 ingresos, 1 patrimonio y deudas.</p>
+      ${Object.entries(groups).map(([g, list]) => `<h3>${esc(g)}</h3><ul class="list">${list.map((c) => `<li class="tap" data-acc="${esc(c.codigo)}"><div class="grow"><div class="t">${esc(c.nombre)}${c.activa === 0 || c.activa === '0' ? ' <span class="chip">oculta</span>' : ''}</div><div class="s">${esc(c.codigo)} · ${esc(c.tipo)}</div></div></li>`).join('')}</ul>`).join('')}
+    </details>
 
     <h2>Datos</h2>
     <div class="card stack">
@@ -633,7 +735,7 @@ function viewAjustes() {
   $$('[data-pre]').forEach((li) => { li.onclick = () => editPrestamo(li.dataset.pre); });
   $('#addpre').onclick = () => editPrestamo(null);
   $$('[data-acc]').forEach((li) => { li.onclick = () => editCuenta(li.dataset.acc); });
-  $('#addacc').onclick = () => editCuenta(null);
+  $$('[data-new]').forEach((b) => { b.onclick = () => editCuenta(null, b.dataset.new); });
   $('#apertura').onclick = apertura;
   $('#imp').onchange = importar;
   $('#exp').onclick = exportar;
@@ -711,46 +813,60 @@ function editPrestamo(id) {
     onDelete: p ? async () => updateRows('Prestamos', [{ ...p, activo: 0 }]) : null,
   });
 }
-function editCuenta(code) {
+const KIND_DEF = {
+  dinero: { tipo: 'activo', grupo: 'Tesorería', titulo: 'Nuevo banco o inversión' },
+  bien: { tipo: 'activo', grupo: 'Inmovilizado', titulo: 'Nuevo bien' },
+  deuda: { tipo: 'pasivo', grupo: 'Deudas', titulo: 'Nueva deuda' },
+  gasto: { tipo: 'gasto', grupo: 'Gastos variables', titulo: 'Nueva categoría de gasto' },
+  ingreso: { tipo: 'ingreso', grupo: 'Ingresos', titulo: 'Nuevo tipo de ingreso' },
+};
+function editCuenta(code, kind) {
   const L = S.libro; const c = L.cuentas.find((x) => x.codigo === code);
-  const grupos = [...new Set(L.cuentas.map((x) => x.grupo).filter(Boolean))];
-  const fields = [
-    ...(c ? [] : [{ key: 'codigo', label: 'Código', required: true, hint: '6xx gastos · 7xx ingresos · 572x bancos · 2xx inmovilizado · 17x deudas' }]),
-    { key: 'nombre', label: 'Nombre', required: true },
-    { key: 'tipo', label: 'Tipo', type: 'select', options: [['activo', 'Activo (lo que tienes)'], ['pasivo', 'Pasivo (lo que debes)'], ['patrimonio', 'Patrimonio neto'], ['ingreso', 'Ingreso'], ['gasto', 'Gasto']], required: true },
-    { key: 'grupo', label: 'Grupo', type: 'text', hint: `Existentes: ${grupos.join(', ')}` },
-    { key: 'orden', label: 'Orden', type: 'number' },
-    { key: 'activa', label: 'Visible en los formularios', type: 'checkbox' },
-  ];
+  const k = c ? kindOf(c) : kind;
+  const fields = [{ key: 'nombre', label: 'Nombre', required: true }];
+  if (k === 'dinero') fields.push({ key: 'grupo', label: 'Tipo', type: 'select', options: [['Tesorería', 'Banco o efectivo'], ['Inversiones', 'Inversión (Trade Republic, fondos…)']] });
+  if (k === 'gasto') fields.push({ key: 'grupo', label: 'Grupo', type: 'select', options: [...new Set(['Gastos variables', 'Gastos fijos', ...L.cuentas.filter((x) => x.tipo === 'gasto').map((x) => x.grupo)])].map((g) => [g, g]) });
+  fields.push({ key: 'activa', label: 'Visible en los formularios', type: 'checkbox' });
+  const extra = c ? `<p class="hint">Código contable: ${esc(c.codigo)} · ${esc(c.tipo)}</p>` : '';
   formModal({
-    title: c ? `Cuenta ${c.codigo}` : 'Nueva cuenta', fields, values: c || { activa: 1, orden: L.cuentas.length + 1 },
+    title: c ? c.nombre : KIND_DEF[k]?.titulo || 'Nueva cuenta', fields, extra,
+    values: c || { activa: 1, grupo: KIND_DEF[k]?.grupo },
     onSave: async (d) => {
       if (c) { await updateRows('Cuentas', [{ ...c, ...d, _row: c._row }]); return; }
-      if (L.byCode[d.codigo]) throw new Error('Ya existe una cuenta con ese código');
-      await addRows('Cuentas', [{ ...d, codigo: String(d.codigo) }]);
+      const def = KIND_DEF[k] || KIND_DEF.gasto;
+      const codigo = d.grupo === 'Inversiones' ? nextInv(L) : nextCode(L.cuentas, k);
+      await addRows('Cuentas', [{ codigo, nombre: d.nombre, tipo: def.tipo, grupo: d.grupo || def.grupo, orden: L.cuentas.length + 1, activa: 1 }]);
     },
   });
 }
+const nextInv = (L) => { for (let n = 541; n < 550; n++) if (!L.byCode[String(n)]) return String(n); return nextCode(L.cuentas, 'dinero'); };
 
 function apertura() {
   const L = S.libro;
-  const accs = L.cuentas.filter((c) => (c.tipo === 'activo' || c.tipo === 'pasivo') && c.codigo !== '281' && c.activa !== 0);
+  const ORD = ['dinero', 'bien', 'deuda'];
+  const accs = L.cuentas.filter((c) => ORD.includes(kindOf(c)) && c.activa !== 0).sort((a, b) => ORD.indexOf(kindOf(a)) - ORD.indexOf(kindOf(b)));
+  const groups = {}; accs.forEach((c) => (groups[KIND_LABEL[kindOf(c)]] ??= []).push(c));
+  const fechaDef = L.inicio || todayISO();
   openModal(`<h2>Saldos iniciales</h2><form novalidate>
-    <div class="field"><label class="lbl">Fecha de apertura</label><input type="date" name="fecha" value="${todayISO().slice(0, 4)}-01-01"></div>
-    <p class="hint" style="margin-top:-4px">Deja en blanco las cuentas sin saldo. Para la hipoteca, pon lo que queda por pagar.</p>
-    ${accs.map((c) => `<div class="row" style="margin-bottom:8px"><label class="grow small" for="ap_${c.codigo}">${esc(c.nombre)} <span class="muted">· ${esc(c.codigo)}${c.tipo === 'pasivo' ? ' · deuda' : ''}</span></label><input id="ap_${c.codigo}" name="${c.codigo}" type="text" inputmode="decimal" style="width:140px;text-align:right" placeholder="0,00"></div>`).join('')}
-    <div class="actions"><button type="button" class="btn" data-cancel>Cancelar</button><button class="btn primary" type="submit">Crear asiento de apertura</button></div></form>`, (m) => {
+    <div class="field"><label class="lbl">¿Desde qué día empiezas a llevar las cuentas?</label><input type="date" name="fecha" value="${fechaDef}"><div class="hint">Puede ser hoy o el 1 de enero. Los movimientos anteriores seguirán contando para las estadísticas de gasto, pero no para los saldos.</div></div>
+    <p class="small muted">Escribe cuánto tenías ese día en cada sitio. Deja en blanco lo que esté a cero.</p>
+    ${Object.entries(groups).map(([g, list]) => `<h3>${esc(g)}</h3>${list.map((c) => `<div class="row" style="margin-bottom:8px"><label class="grow" for="ap_${c.codigo}">${esc(c.nombre)}${kindOf(c) === 'deuda' ? ' <span class="muted small">(lo que queda por pagar)</span>' : ''}</label><input id="ap_${c.codigo}" name="${c.codigo}" type="text" inputmode="decimal" style="width:130px;text-align:right" placeholder="0,00"></div>`).join('')}`).join('')}
+    <div class="actions"><button type="button" class="btn" data-cancel>Cancelar</button><button class="btn primary" type="submit">Guardar saldos</button></div></form>`, (m) => {
     $('[data-cancel]', m).onclick = closeModal;
     $('form', m).onsubmit = async (e) => {
       e.preventDefault(); const f = e.target; const fecha = f.fecha.value || todayISO(); const asiento = uid();
       const rows = [];
       for (const c of accs) {
-        const v = round2(num(f.elements[c.codigo].value)); if (!v) continue;
+        const v = round2(num(f.querySelector(`[name="${c.codigo}"]`).value)); if (!v) continue;
         const [debe, haber] = c.tipo === 'pasivo' ? (v > 0 ? ['100', c.codigo] : [c.codigo, '100']) : (v > 0 ? [c.codigo, '100'] : ['100', c.codigo]);
         rows.push(newEntry({ asiento, fecha, concepto: `Saldo inicial ${c.nombre}`, debe, haber, importe: Math.abs(v), clase: 'apertura', origen: 'apertura' }));
       }
       if (!rows.length) { toast('No has puesto ningún saldo'); return; }
-      try { await addRows('Diario', rows); closeModal(); toast(`Apertura creada (${rows.length} cuentas)`); render(); } catch (err) { fail(err); }
+      try {
+        await S.store.add('Diario', rows);
+        if (!L.inicio || fecha < L.inicio) await setConfig('inicio', fecha);
+        await reload(); closeModal(); toast(`Saldos guardados (${rows.length} cuentas)`); render();
+      } catch (err) { fail(err); }
     };
   });
 }
