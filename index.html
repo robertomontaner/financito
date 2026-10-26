@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Financito</title>
+  <meta name="description" content="Contabilidad personal de doble partida sobre Google Sheets">
+  <meta name="theme-color" content="#14614a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Financito">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand"><span class="logo" aria-hidden="true">◧</span><span id="title">Financito</span></div>
+      <div id="topbar-actions"></div>
+    </header>
+    <main id="view" tabindex="-1"><div class="center muted pad">Cargando…</div></main>
+    <nav class="bottomnav" id="nav" hidden>
+      <a href="#/inicio" data-r="inicio"><span class="ic">⌂</span><span>Inicio</span></a>
+      <a href="#/diario" data-r="diario"><span class="ic">≡</span><span>Diario</span></a>
+      <a href="#/apuntar" data-r="apuntar" class="fab" aria-label="Apuntar"><span class="ic">+</span></a>
+      <a href="#/informes" data-r="informes"><span class="ic">▤</span><span>Informes</span></a>
+      <a href="#/ajustes" data-r="ajustes"><span class="ic">⚙</span><span>Ajustes</span></a>
+    </nav>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
