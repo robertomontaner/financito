@@ -953,8 +953,8 @@ function periodBar(onChange, { allowYear = true } = {}) {
     ${hoy ? '<button class="btn sm" data-hoy>Hoy</button>' : ''}
   </div>`;
 }
-const cell = (v) => `<td class="n ${Math.abs(v) < 0.005 ? 'z' : ''}">${Math.abs(v) < 0.005 ? '–' : fmt(v, 0)}&nbsp;€</td>`;
-const cellNeg = (v) => `<td class="n ${Math.abs(v) < 0.005 ? 'z' : cls(v)}">${Math.abs(v) < 0.005 ? '–' : fmt(v, 0)}&nbsp;€</td>`;
+const cell = (v) => `<td class="n ${Math.abs(v) < 0.005 ? 'z' : ''}">${Math.abs(v) < 0.005 ? '–' : `${fmt(v, 0)}&nbsp;€`}</td>`;
+const cellNeg = (v) => `<td class="n ${Math.abs(v) < 0.005 ? 'z' : cls(v)}">${Math.abs(v) < 0.005 ? '–' : `${fmt(v, 0)}&nbsp;€`}</td>`;
 const cellDiff = (v, gasto = true) => `<td class="n ${Math.abs(v) < 0.5 ? 'z' : (gasto ? (v > 0 ? 'neg' : 'pos') : (v > 0 ? 'pos' : 'neg'))}">${Math.abs(v) < 0.5 ? '–' : `${v > 0 ? '+' : ''}${fmt(v, 0)}&nbsp;€`}</td>`;
 const goAccount = (root) => $$('tr[data-acc]', root).forEach((tr) => { tr.onclick = () => { S.diario = { ...S.diario, cuenta: tr.dataset.acc, mes: S.periodo === 'año' ? '' : S.mes, q: '' }; location.hash = '#/diario'; }; });
 
