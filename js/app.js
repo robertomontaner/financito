@@ -1,7 +1,7 @@
 import { CONFIG } from './config.js';
 import { auth, AuthError, SheetsStore, LocalStore } from './store.js';
 import {
-  Libro, TABLES, CLASES, uid, round2, num, truthy, todayISO, ym, addMonths, eur, fmt, MESES, mesLargo, normDate, cuadroPrestamo, participacion, pad, kindOf, KIND_LABEL, displayGroup, nextCode,
+  Libro, TABLES, CLASES, uid, round2, num, truthy, todayISO, ym, addMonths, eur, fmt, MESES, mesLargo, normDate, cuadroPrestamo, participacion, pad, kindOf, KIND_LABEL, displayGroup, nextCode, lastDay, monthsBetween,
 } from './model.js';
 
 // ---------------- estado y utilidades de UI ----------------
@@ -315,13 +315,14 @@ function renderReconnect() {
 }
 
 // ---------------- router ----------------
-const ROUTES = { inicio: viewInicio, mes: viewMes, apuntar: viewApuntar, diario: viewDiario, informes: viewInformes, ajustes: viewAjustes };
+const ROUTES = { inicio: viewInicio, mes: viewMes, apuntar: viewApuntar, diario: viewDiario, informes: viewInformes, ajustes: viewAjustes, graficos: viewGraficos };
 function render() {
   if (!S.libro) return;
   const r = (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'inicio';
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.r === r));
-  $('#title').textContent = { inicio: 'Financito', mes: 'Mes', apuntar: 'Apuntar', diario: 'Movimientos', informes: 'Informes', ajustes: 'Ajustes' }[r] || 'Financito';
-  $('#topbar-actions').innerHTML = `${S.store.kind === 'demo' ? '<span class="chip">demo</span>' : ''}<a href="#/ajustes" class="iconbtn ${r === 'ajustes' ? 'on' : ''}" aria-label="Ajustes">⚙</a>`;
+  $('#title').textContent = { inicio: 'Financito', mes: 'Mes', apuntar: 'Apuntar', diario: 'Movimientos', informes: 'Informes', ajustes: 'Ajustes', graficos: 'Gráficos' }[r] || 'Financito';
+  $('#topbar-actions').innerHTML = `${S.store.kind === 'demo' ? '<span class="chip">demo</span>' : ''}<a href="#/graficos" class="iconbtn ${r === 'graficos' ? 'on' : ''}" aria-label="Gráficos" title="Gráficos"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></a><a href="#/ajustes" class="iconbtn ${r === 'ajustes' ? 'on' : ''}" aria-label="Ajustes">⚙</a>`;
+  view().classList.toggle('wide', r === 'graficos' || r === 'informes');
   (ROUTES[r] || viewInicio)();
   view().focus({ preventScroll: true });
 }
@@ -737,13 +738,12 @@ function viewDiario() {
 }
 
 // ---------------- INFORMES ----------------
-const INFORMES = [['libro', 'Libro diario'], ['mayor', 'Libro mayor'], ['pyg', 'PyG'], ['balance', 'Balance'], ['graficos', 'Gráficos'], ['cuadre', 'Bancos']];
+const INFORMES = [['libro', 'Libro diario'], ['mayor', 'Libro mayor'], ['pyg', 'PyG'], ['balance', 'Balance'], ['cuadre', 'Bancos']];
 const INF_HELP = {
   libro: ['Libro diario', 'Todos los asientos en orden de fecha. Cada uno dice qué cuenta recibe (debe) y cuál entrega (haber). Debe y haber siempre suman lo mismo.'],
-  mayor: ['Libro mayor', 'Los mismos asientos, pero ordenados por cuenta: cada cuenta es una «T» con sus entradas, salidas y saldo.'],
+  mayor: ['Libro mayor', 'Los mismos asientos, pero ordenados por cuenta: cada cuenta es una «T» con el debe a la izquierda y el haber a la derecha. Cada movimiento aparece dos veces: en el debe de una cuenta y en el haber de otra. Toca un apunte para ver sus dos mitades iluminadas.'],
   pyg: ['PyG · ¿cuánto ahorro?', 'Solo cuentas de gasto (6) e ingreso (7). Ingresos − gastos = ahorro. Los traspasos y el reparto no aparecen: solo mueven dinero entre tus cuentas.'],
   balance: ['Balance · ¿cuánto tengo?', 'Lo que tienes (bancos, inversiones, bienes) y lo que debes, a final de mes. Sube cada mes lo que ahorras.'],
-  graficos: ['Gráficos', 'Tus gastos e ingresos, en dibujo.'],
   cuadre: ['Cierre de saldos', 'Escribes lo que dice cada banco y Financito apunta una corrección donde no cuadre (céntimos, gastos olvidados).'],
 };
 function viewInformes() {
@@ -755,7 +755,7 @@ function viewInformes() {
       <p class="small muted">La pestaña <strong>Mes</strong> es la de caja: el reparto solo pasa dinero de ${esc(S.libro.principal ? S.libro.nombre(S.libro.principal) : 'tu cuenta principal')} a otras cuentas (traspasos), así que cambia el balance de cada cuenta pero no la PyG.</p></details>
     <div id="inf" style="margin-top:12px"></div>`;
   $$('.seg button[data-i]').forEach((b) => { b.onclick = () => { S.informe = b.dataset.i; viewInformes(); }; });
-  ({ libro: infLibro, mayor: infMayor, pyg: infPyG, balance: infBalance, graficos: infGraficos, cuadre: infCuadre })[S.informe]();
+  ({ libro: infLibro, mayor: infMayor, pyg: infPyG, balance: infBalance, cuadre: infCuadre })[S.informe]();
 }
 
 // rango del periodo elegido
@@ -794,29 +794,63 @@ function infLibro() {
 function infMayor() {
   const L = S.libro; const [from, to] = periodRange();
   if (S.mayorCuenta) return mayorCuenta(S.mayorCuenta);
-  // balance de sumas y saldos del periodo
+  S.mayorVista ??= 't';
+  const rows = L.activeRows.filter((r) => r.fecha >= from && r.fecha <= to).sort((a, b) => a.fecha.localeCompare(b.fecha));
   const sums = {};
-  for (const r of L.activeRows) {
-    if (r.fecha < from || r.fecha > to) continue;
-    (sums[r.debe] ??= { d: 0, h: 0 }).d += r.importe; (sums[r.haber] ??= { d: 0, h: 0 }).h += r.importe;
-  }
+  for (const r of rows) { (sums[r.debe] ??= { d: [], h: [] }).d.push(r); (sums[r.haber] ??= { d: [], h: [] }).h.push(r); }
   const codes = Object.keys(sums).sort((a, b) => a.localeCompare(b));
-  const GRP = { 1: 'Financiación y patrimonio', 2: 'Bienes (inmovilizado)', 4: 'Deudores y acreedores', 5: 'Bancos e inversiones', 6: 'Gastos', 7: 'Ingresos' };
-  let html = ''; let cur = ''; let td = 0; let th = 0;
-  for (const c of codes) {
-    const g = c[0]; if (g !== cur) { cur = g; html += `<tr class="sec"><td colspan="4">${esc(g)} · ${esc(GRP[g] || 'Otras')}</td></tr>`; }
-    const { d, h } = sums[c]; td += d; th += h; const sal = L.debitNormal(c) ? d - h : h - d;
-    html += `<tr class="tap" data-acc="${esc(c)}"><td><span class="as-code">${esc(c)}</span> ${esc(L.nombre(c))}</td><td class="n">${fmt(d, 0)}</td><td class="n">${fmt(h, 0)}</td><td class="n ${cls(sal)}">${fmt(sal, 0)}</td></tr>`;
+  const KORD = ['dinero', 'gasto', 'ingreso', 'deuda', 'bien', 'contable'];
+  const toggle = `<div class="seg mini" style="margin-bottom:10px"><button data-mv="t" class="${S.mayorVista === 't' ? 'on' : ''}">Cuentas en T</button><button data-mv="tabla" class="${S.mayorVista === 'tabla' ? 'on' : ''}">Sumas y saldos</button></div>`;
+  let body = '';
+  if (S.mayorVista === 't') {
+    const key = (r) => esc(r.asiento || r.id);
+    const line = (r, side) => `<div class="tl" data-as="${key(r)}"><span class="tl-c">${esc(r.concepto || '')}</span><span class="tl-v">${fmt(r.importe)}</span><span class="tl-o">${side === 'd' ? '←' : '→'} ${esc(L.nombre(side === 'd' ? r.haber : r.debe))}</span></div>`;
+    const MAX = 6;
+    const tCard = (c) => {
+      const { d, h } = sums[c]; const sd = round2(d.reduce((s, r) => s + r.importe, 0)); const sh = round2(h.reduce((s, r) => s + r.importe, 0));
+      const dn = L.debitNormal(c); const mov = round2(dn ? sd - sh : sh - sd); const k = L.kind(c);
+      const more = (arr) => (arr.length > MAX ? `<button class="tl-more" data-open="${esc(c)}">+${arr.length - MAX} más</button>` : '');
+      return `<div class="tcard k-${k}"><button class="tc-head" data-open="${esc(c)}"><span class="pk-ic sm">${emojiFor(L.byCode[c])}</span><span class="tc-name">${esc(L.nombre(c))}</span><span class="tc-mov ${mov < 0 ? 'neg' : ''}">${mov > 0 ? '+' : ''}${fmt(mov)}</span></button>
+        <div class="tc-cols"><div class="tc-col"><div class="tc-h">Debe</div>${d.slice(-MAX).map((r) => line(r, 'd')).join('') || '<div class="tl-empty">—</div>'}${more(d)}<div class="tc-sum">${fmt(sd)}</div></div>
+        <div class="tc-col"><div class="tc-h">Haber</div>${h.slice(-MAX).map((r) => line(r, 'h')).join('') || '<div class="tl-empty">—</div>'}${more(h)}<div class="tc-sum">${fmt(sh)}</div></div></div></div>`;
+    };
+    const KTXT = { dinero: 'Bancos e inversiones · debe = entra, haber = sale', gasto: 'Gastos · casi todo en el debe', ingreso: 'Ingresos · casi todo en el haber', deuda: 'Deudas · haber = debes más, debe = devuelves', bien: 'Bienes', contable: 'Cuentas contables' };
+    for (const k of KORD) {
+      const cs = codes.filter((c) => L.kind(c) === k); if (!cs.length) continue;
+      body += `<h3 class="tgroup">${esc(KTXT[k])}</h3><div class="tgrid">${cs.map(tCard).join('')}</div>`;
+    }
+    body = `<div id="hlinfo" class="banner" hidden></div>${body || '<div class="empty">Sin movimientos en este periodo.</div>'}`;
+  } else {
+    const GRP = { 1: 'Financiación y patrimonio', 2: 'Bienes (inmovilizado)', 4: 'Deudores y acreedores', 5: 'Bancos e inversiones', 6: 'Gastos', 7: 'Ingresos' };
+    let html = ''; let cur = ''; let td = 0; let th = 0;
+    for (const c of codes) {
+      const g = c[0]; if (g !== cur) { cur = g; html += `<tr class="sec"><td colspan="4">${esc(g)} · ${esc(GRP[g] || 'Otras')}</td></tr>`; }
+      const d = round2(sums[c].d.reduce((s, r) => s + r.importe, 0)); const h = round2(sums[c].h.reduce((s, r) => s + r.importe, 0)); td += d; th += h; const sal = L.debitNormal(c) ? d - h : h - d;
+      html += `<tr class="tap" data-acc="${esc(c)}"><td><span class="as-code">${esc(c)}</span> ${esc(L.nombre(c))}</td><td class="n">${d ? fmt(d, 0) : '<span class="muted">—</span>'}</td><td class="n">${h ? fmt(h, 0) : '<span class="muted">—</span>'}</td><td class="n ${cls(sal)}">${fmt(sal, 0)}</td></tr>`;
+    }
+    body = `<div class="tablewrap"><table class="rep"><tr><th>Cuenta</th><th>Debe</th><th>Haber</th><th>Movimiento</th></tr>${html || '<tr><td colspan="4" class="muted">Sin movimientos</td></tr>'}
+      <tr class="tot"><td>Total</td><td class="n">${fmt(td, 0)}</td><td class="n">${fmt(th, 0)}</td><td class="n">${Math.abs(td - th) < 0.01 ? '✓' : `<span class="neg">${fmt(td - th)}</span>`}</td></tr></table></div>
+      <p class="small muted">En doble partida el total del debe siempre es igual al del haber. Toca una cuenta para ver su mayor.</p>`;
   }
   $('#inf').innerHTML = `${periodBar(infMayor)}
-    <div class="field">${pickerField('cuenta', 'Ver el mayor de una cuenta', () => true, '', { placeholder: 'Elegir cuenta…' })}</div>
-    <h3>Sumas y saldos del periodo</h3>
-    <div class="tablewrap"><table class="rep"><tr><th>Cuenta</th><th>Debe</th><th>Haber</th><th>Movimiento</th></tr>${html || '<tr><td colspan="4" class="muted">Sin movimientos</td></tr>'}
-      <tr class="tot"><td>Total</td><td class="n">${fmt(td, 0)}</td><td class="n">${fmt(th, 0)}</td><td class="n">${Math.abs(td - th) < 0.01 ? '✓' : `<span class="neg">${fmt(td - th)}</span>`}</td></tr></table></div>
-    <p class="small muted">En doble partida el total del debe siempre es igual al del haber. Toca una cuenta para ver su mayor.</p>`;
+    <div class="row between wrap" style="gap:8px">${toggle}<div style="flex:1;min-width:220px">${pickerField('cuenta', '', () => true, '', { placeholder: 'Abrir el mayor de una cuenta…' })}</div></div>${body}`;
   bindPickers($('#inf'));
   $('#inf input[name=cuenta]').addEventListener('change', (e) => { S.mayorCuenta = e.target.value; infMayor(); });
-  $$('#inf tr[data-acc]').forEach((tr) => { tr.onclick = () => { S.mayorCuenta = tr.dataset.acc; infMayor(); }; });
+  $$('#inf [data-mv]').forEach((b) => { b.onclick = () => { S.mayorVista = b.dataset.mv; infMayor(); }; });
+  $$('#inf tr[data-acc], #inf [data-open]').forEach((el) => { el.onclick = () => { S.mayorCuenta = el.dataset.acc || el.dataset.open; infMayor(); scrollTo(0, 0); }; });
+  // tocar un apunte ilumina sus dos mitades (debe de una cuenta, haber de otra)
+  $$('#inf .tl').forEach((el) => {
+    el.onclick = () => {
+      const k = el.dataset.as; const on = !el.classList.contains('hl');
+      $$('#inf .tl.hl').forEach((x) => x.classList.remove('hl'));
+      const info = $('#hlinfo');
+      if (!on) { info.hidden = true; return; }
+      $$(`#inf .tl[data-as="${CSS.escape(k)}"]`).forEach((x) => x.classList.add('hl'));
+      const rs = rows.filter((r) => (r.asiento || r.id) === k);
+      info.hidden = false;
+      info.innerHTML = `<strong>${esc(rs[0].concepto || 'Apunte')}</strong> · ${esc(shortDate(rs[0].fecha))}<br>${rs.map((r) => `<span class="nowrap">Debe <strong>${esc(L.nombre(r.debe))}</strong> ${fmt(r.importe)} ⇄ Haber <strong>${esc(L.nombre(r.haber))}</strong> ${fmt(r.importe)}</span>`).join('<br>')}<div class="small muted">Las dos mitades están iluminadas en sus cuentas.</div>`;
+    };
+  });
 }
 
 function mayorCuenta(code) {
@@ -986,85 +1020,215 @@ async function loadChart() {
   chartLib ??= new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js'; s.onload = () => res(window.Chart); s.onerror = rej; document.head.appendChild(s); });
   return chartLib;
 }
-const PALETTE = ['#1d8a68', '#3a78c2', '#d08a2e', '#b4508f', '#7a5cc2', '#3ba3a3', '#c2553a', '#7d8a3a', '#8a6b4f', '#5a6b7d'];
-async function infGraficos() {
-  const L = S.libro; const isMes = S.periodo !== 'año';
-  const year = isMes ? Number(S.mes.slice(0, 4)) : S.year;
-  const months = Array.from({ length: 12 }, (_, i) => `${year}-${pad(i + 1)}`);
-  const cur = ym(todayISO());
-  const showMonths = months.filter((m) => m <= cur || L.activeRows.some((r) => ym(r.fecha) === m));
-  const data = showMonths.map((m) => L.gastoMes(m));
-  const cats = [...new Set(data.flatMap((d) => Object.keys(d.porCuenta)))].sort();
-  const mesSel = isMes ? S.mes : (showMonths[showMonths.length - 1] || cur);
-  const gtabs = `<div class="seg" style="margin-bottom:12px"><button data-g="general" class="${S.grafTab !== 'imp' ? 'on' : ''}">General</button><button data-g="imp" class="${S.grafTab === 'imp' ? 'on' : ''}">Imprevistos</button></div>`;
-  const bindG = () => $$('#inf [data-g]').forEach((b) => { b.onclick = () => { S.grafTab = b.dataset.g; infGraficos(); }; });
-  if (S.grafTab === 'imp') return graficosImprevistos({ year, isMes, showMonths, gtabs, bindG });
-  $('#inf').innerHTML = `${periodBar(infGraficos)}${gtabs}
-    <div class="card"><h3>En qué se fue ${esc(mesLargo(mesSel))}</h3><div class="chartbox"><canvas id="c2"></canvas></div><p class="small muted">Incluye imprevistos.</p></div>
-    <div class="card"><h3>Gasto corriente por mes · ${year}</h3><div class="chartbox"><canvas id="c1"></canvas></div><p class="small muted">Sin imprevistos ni amortizaciones.</p></div>
-    <div class="card"><h3>Ingresos vs gastos · ${year}</h3><div class="chartbox"><canvas id="c3"></canvas></div></div>
-    ${L.inicio ? `<div class="card"><h3>Patrimonio neto · ${year}</h3><div class="chartbox"><canvas id="c4"></canvas></div></div>` : ''}`;
-  bindG();
-  let Chart;
-  try { Chart = await loadChart(); } catch { $('#inf').insertAdjacentHTML('afterbegin', '<div class="banner warn">No se pudo cargar la librería de gráficos (¿sin conexión?).</div>'); return; }
-  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
-  Chart.defaults.color = dark ? '#94a096' : '#667066';
-  Chart.defaults.borderColor = dark ? '#2b332e' : '#e3e7e0';
-  Chart.defaults.font.family = 'system-ui, sans-serif';
-  const labels = showMonths.map((m) => MESES[Number(m.slice(5)) - 1]);
-  const money = { callbacks: { label: (c) => `${c.dataset.label || c.label}: ${eur(c.parsed.y ?? c.parsed)}` } };
-  const axis = { ticks: { callback: (v) => `${fmt(v, 0)} €` } };
-  S.charts?.forEach((c) => c.destroy()); S.charts = [];
-  const d = L.gastoMes(mesSel, { incluirImprevistos: true }); const entries = Object.entries(d.porCuenta).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-  S.charts.push(new Chart($('#c2'), { type: 'doughnut', data: { labels: entries.map(([c]) => L.nombre(c)), datasets: [{ data: entries.map(([, v]) => v), backgroundColor: entries.map((_, i) => PALETTE[i % PALETTE.length]), borderWidth: 0 }] }, options: { maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'right', labels: { boxWidth: 10 } }, tooltip: { callbacks: { label: (c) => `${c.label}: ${eur(c.parsed)}` } } } } }));
-  S.charts.push(new Chart($('#c1'), { type: 'bar', data: { labels, datasets: cats.map((c, i) => ({ label: L.nombre(c), data: data.map((x) => x.porCuenta[c] || 0), backgroundColor: PALETTE[i % PALETTE.length], borderRadius: 3 })) }, options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } }, tooltip: money }, scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, ...axis } } } }));
-  const p = L.pyg(year); const idx = showMonths.map((m) => Number(m.slice(5)) - 1);
-  S.charts.push(new Chart($('#c3'), { type: 'bar', data: { labels, datasets: [{ label: 'Ingresos', data: idx.map((i) => p.totalIngresos[i]), backgroundColor: '#1d8a68', borderRadius: 3 }, { label: 'Gastos', data: idx.map((i) => p.totalGastos[i]), backgroundColor: '#c2553a', borderRadius: 3 }] }, options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } }, tooltip: money }, scales: { x: { grid: { display: false } }, y: axis } } }));
-  if (L.inicio) {
-    const pm = showMonths.filter((m) => m >= ym(L.inicio));
-    S.charts.push(new Chart($('#c4'), { type: 'line', data: { labels: pm.map((m) => MESES[Number(m.slice(5)) - 1]), datasets: [{ label: 'Patrimonio neto', data: pm.map((m) => L.balance(m).patrimonioNeto), borderColor: '#3a78c2', backgroundColor: 'rgba(58,120,194,.12)', fill: true, tension: 0.25, pointRadius: 3 }] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: money }, scales: { x: { grid: { display: false } }, y: axis } } }));
-  }
-}
-
+// ================= GRÁFICOS =================
+// Paleta categórica fija (validada para daltonismo); el color sigue a la entidad, no al puesto.
+const VIZ = {
+  light: { s: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'], grid: '#e3e7e0', ink: '#667066', surface: '#ffffff' },
+  dark: { s: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'], grid: '#2b332e', ink: '#94a096', surface: '#171c19' },
+};
+const vizMode = () => (matchMedia('(prefers-color-scheme: dark)').matches ? VIZ.dark : VIZ.light);
+const PALETTE = VIZ.light.s;
 async function chartReady() {
-  const Chart = await loadChart();
-  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
-  Chart.defaults.color = dark ? '#94a096' : '#667066'; Chart.defaults.borderColor = dark ? '#2b332e' : '#e3e7e0'; Chart.defaults.font.family = 'system-ui, sans-serif';
+  const Chart = await loadChart(); const v = vizMode();
+  Chart.defaults.color = v.ink; Chart.defaults.borderColor = v.grid; Chart.defaults.font.family = 'system-ui, sans-serif';
   S.charts?.forEach((c) => c.destroy()); S.charts = [];
   return Chart;
 }
-async function graficosImprevistos({ year, isMes, showMonths, gtabs, bindG }) {
-  const L = S.libro;
-  const esImp = (r) => r.clase === 'imprevisto' && L.tipo(r.debe) === 'gasto';
-  const imps = L.activeRows.filter((r) => esImp(r) && r.fecha.startsWith(String(year))).sort((a, b) => b.fecha.localeCompare(a.fecha));
-  const p = L.pyg(year);
-  const porMes = showMonths.map((m) => round2(imps.filter((r) => ym(r.fecha) === m).reduce((a, r) => a + r.importe, 0)));
-  const totAno = round2(imps.reduce((a, r) => a + r.importe, 0));
-  const gastoAno = round2(p.totalGastos.reduce((a, v) => a + v, 0));
-  const media = showMonths.length ? totAno / showMonths.length : 0;
-  const lista = isMes ? imps.filter((r) => ym(r.fecha) === S.mes) : imps;
-  const totLista = round2(lista.reduce((a, r) => a + r.importe, 0));
-  const porCat = {}; imps.forEach((r) => { porCat[r.debe] = (porCat[r.debe] || 0) + r.importe; });
-  const cats = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
-  const fondo = L.fondo && L.byCode[L.fondo] && L.inicio ? L.balanceToDate(L.fondo) : null;
-  $('#inf').innerHTML = `${periodBar(infGraficos)}${gtabs}
-    <div class="kpis duo" style="margin-bottom:10px">
-      <div class="kpi"><div class="lbl">Imprevistos ${year}</div><div class="val">${eur(totAno, 0)}</div><div class="sub">${gastoAno ? `${fmt((totAno / gastoAno) * 100, 0)} % de todo tu gasto` : '—'}</div></div>
-      <div class="kpi"><div class="lbl">Media al mes</div><div class="val">${eur(media, 0)}</div><div class="sub">${fondo !== null ? `en ${esc(L.nombre(L.fondo))}: ${eur(fondo, 0)}` : 'lo que conviene apartar'}</div></div>
+
+const isoD = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const dOf = (iso) => new Date(`${iso}T12:00:00`);
+const addDays = (iso, k) => { const d = dOf(iso); d.setDate(d.getDate() + k); return isoD(d); };
+const daysBetween = (a, b) => Math.round((dOf(b) - dOf(a)) / 864e5) + 1;
+const mondayOf = (iso) => { const d = dOf(iso); const k = (d.getDay() + 6) % 7; d.setDate(d.getDate() - k); return isoD(d); };
+const endOfMonth = (ymStr) => `${ymStr}-${pad(lastDay(Number(ymStr.slice(0, 4)), Number(ymStr.slice(5))))}`;
+
+const RANGOS = [
+  ['7d', '7 días'], ['semana', 'Esta semana'], ['mes', 'Este mes'], ['mespasado', 'Mes pasado'], ['30d', '30 días'],
+  ['trim', 'Trimestre'], ['3m', '3 meses'], ['ano', 'Este año'], ['12m', '12 meses'], ['todo', 'Todo'], ['custom', 'Elegir fechas'],
+];
+S.g ??= { r: 'mes', off: 0, from: '', to: '', cat: '', banco: '', imp: true };
+
+// rango [from, to] del preset con desplazamiento (‹ ›)
+function gRange() {
+  const g = S.g; const t = todayISO(); const o = g.off; const curM = ym(t);
+  switch (g.r) {
+    case '7d': return [addDays(t, -6 + 7 * o), addDays(t, 7 * o)];
+    case '30d': return [addDays(t, -29 + 30 * o), addDays(t, 30 * o)];
+    case 'semana': { const m = addDays(mondayOf(t), 7 * o); return [m, addDays(m, 6)]; }
+    case 'mes': { const m = addMonths(curM, o); return [`${m}-01`, endOfMonth(m)]; }
+    case 'mespasado': { const m = addMonths(curM, o - 1); return [`${m}-01`, endOfMonth(m)]; }
+    case 'trim': { const q0 = addMonths(`${curM.slice(0, 4)}-${pad(Math.floor((Number(curM.slice(5)) - 1) / 3) * 3 + 1)}`, 3 * o); return [`${q0}-01`, endOfMonth(addMonths(q0, 2))]; }
+    case '3m': { const a = addMonths(curM, -2 + 3 * o); return [`${a}-01`, endOfMonth(addMonths(a, 2))]; }
+    case 'ano': { const y = Number(curM.slice(0, 4)) + o; return [`${y}-01-01`, `${y}-12-31`]; }
+    case '12m': { const a = addMonths(curM, -11 + 12 * o); return [`${a}-01`, endOfMonth(addMonths(a, 11))]; }
+    case 'todo': { const f = S.libro.activeRows.reduce((m, r) => (r.fecha < m ? r.fecha : m), t); return [f, t]; }
+    default: return [g.from || `${curM}-01`, g.to || t];
+  }
+}
+function gLabel(from, to) {
+  const f = dOf(from); const tt = dOf(to);
+  const sameY = from.slice(0, 4) === to.slice(0, 4);
+  if (from.slice(8) === '01' && to === endOfMonth(ym(to))) {
+    if (ym(from) === ym(to)) return mesLargo(ym(from)).replace(/^./, (c) => c.toUpperCase());
+    if (sameY && from.slice(5, 7) === '01' && to.slice(5, 7) === '12') return from.slice(0, 4);
+    return `${MESES[f.getMonth()]}${sameY ? '' : ` ${f.getFullYear()}`} – ${MESES[tt.getMonth()]} ${tt.getFullYear()}`;
+  }
+  const o = { day: 'numeric', month: 'short' };
+  return `${f.toLocaleDateString('es-ES', o)}${sameY ? '' : ` ${f.getFullYear()}`} – ${tt.toLocaleDateString('es-ES', o)} ${tt.getFullYear()}`;
+}
+
+// movimientos de gasto e ingreso del rango (devoluciones restan)
+function gMovs(from, to) {
+  const L = S.libro; const g = S.g; const gastos = []; const ingresos = [];
+  const bankOf = (code) => (['dinero', 'deuda'].includes(L.kind(code)) ? code : '');
+  for (const r of L.activeRows) {
+    if (r.fecha < from || r.fecha > to) continue;
+    const td = L.tipo(r.debe); const th = L.tipo(r.haber); const imp = r.clase === 'imprevisto';
+    if (td === 'gasto' || th === 'gasto') {
+      const sign = td === 'gasto' ? 1 : -1; const code = td === 'gasto' ? r.debe : r.haber; const banco = bankOf(td === 'gasto' ? r.haber : r.debe);
+      if (!g.imp && imp) continue;
+      if (g.cat && code !== g.cat) continue;
+      if (g.banco && banco !== g.banco) continue;
+      gastos.push({ r, code, banco, v: sign * r.importe, bloque: L.bloque(code, imp), imp });
+    }
+    if (th === 'ingreso' || td === 'ingreso') {
+      const sign = th === 'ingreso' ? 1 : -1; const code = th === 'ingreso' ? r.haber : r.debe; const banco = bankOf(th === 'ingreso' ? r.debe : r.haber);
+      if (g.banco && banco !== g.banco) continue;
+      ingresos.push({ r, code, banco, v: sign * r.importe });
+    }
+  }
+  return { gastos, ingresos };
+}
+const sumV = (a) => round2(a.reduce((s, x) => s + x.v, 0));
+const groupSum = (a, key) => { const o = {}; a.forEach((x) => { o[x[key]] = (o[x[key]] || 0) + x.v; }); return o; };
+
+// cubetas de tiempo según la longitud del rango
+function gBuckets(from, to) {
+  const n = daysBetween(from, to); const out = [];
+  if (n <= 35) { for (let d = from; d <= to; d = addDays(d, 1)) out.push({ k: d, a: d, b: d, l: String(Number(d.slice(8))) }); return { unit: 'día', out }; }
+  if (n <= 130) {
+    for (let a = mondayOf(from); a <= to; a = addDays(a, 7)) { const b = addDays(a, 6); out.push({ k: a, a: a < from ? from : a, b: b > to ? to : b, l: dOf(a).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) }); }
+    return { unit: 'semana', out };
+  }
+  for (let m = ym(from); m <= ym(to); m = addMonths(m, 1)) out.push({ k: m, a: `${m}-01` < from ? from : `${m}-01`, b: endOfMonth(m) > to ? to : endOfMonth(m), l: `${MESES[Number(m.slice(5)) - 1]}${ym(from).slice(0, 4) !== ym(to).slice(0, 4) ? ` ${m.slice(2, 4)}` : ''}` });
+  return { unit: 'mes', out };
+}
+const inB = (b, fecha) => fecha >= b.a && fecha <= b.b;
+
+const delta = (cur, prev, goodUp) => {
+  if (!prev) return '<span class="muted">sin datos del periodo anterior</span>';
+  const p = ((cur - prev) / Math.abs(prev)) * 100; if (Math.abs(p) < 0.5) return '<span class="muted">= que el periodo anterior</span>';
+  const good = goodUp ? p > 0 : p < 0;
+  return `<span class="${good ? 'pos' : 'neg'}">${p > 0 ? '▲' : '▼'} ${fmt(Math.abs(p), 0)} %</span> <span class="muted">vs anterior</span>`;
+};
+// barras horizontales en HTML: legibles, con número y tocables
+function hbars(entries, total, prevMap, attr) {
+  const max = Math.max(...entries.map(([, v]) => v), 1);
+  return `<div class="hb">${entries.map(([code, v]) => {
+    const pv = prevMap?.[code] || 0; const d = pv ? ((v - pv) / pv) * 100 : null;
+    return `<button class="hb-row" ${attr}="${esc(code)}"><span class="hb-name"><span class="pk-ic sm">${emojiFor(S.libro.byCode[code])}</span>${esc(S.libro.nombre(code) || 'Sin cuenta')}</span>
+      <span class="hb-track"><span class="hb-fill" style="width:${Math.max(1.5, (v / max) * 100)}%"></span></span>
+      <span class="hb-val">${eur(v, 0)}<small>${total ? `${fmt((v / total) * 100, 0)} %` : ''}${d !== null && Math.abs(d) >= 1 ? ` · <span class="${d > 0 ? 'neg' : 'pos'}">${d > 0 ? '▲' : '▼'}${fmt(Math.abs(d), 0)}%</span>` : ''}</small></span></button>`;
+  }).join('')}</div>`;
+}
+
+async function viewGraficos() {
+  const L = S.libro; const g = S.g;
+  const [from, to] = gRange(); const n = daysBetween(from, to);
+  const pFrom = addDays(from, -n); const pTo = addDays(from, -1);
+  const cur = gMovs(from, to); const prev = gMovs(pFrom, pTo);
+  const G = sumV(cur.gastos); const I = sumV(cur.ingresos); const A = round2(I - G);
+  const Gp = sumV(prev.gastos); const Ip = sumV(prev.ingresos);
+  const hoy = todayISO(); const diasTrans = Math.max(1, daysBetween(from, to < hoy ? to : hoy));
+  const porCat = Object.entries(groupSum(cur.gastos, 'code')).filter(([, v]) => v > 0.004).sort((a, b) => b[1] - a[1]);
+  const porBanco = Object.entries(groupSum(cur.gastos, 'banco')).filter(([, v]) => v > 0.004).sort((a, b) => b[1] - a[1]);
+  const imps = cur.gastos.filter((x) => x.imp).sort((a, b) => b.r.fecha.localeCompare(a.r.fecha));
+  const top = [...cur.gastos].sort((a, b) => b.v - a.v).slice(0, 8);
+  const filtros = [g.cat && `Categoría: ${L.nombre(g.cat)}`, g.banco && `Pagado con: ${L.nombre(g.banco)}`, !g.imp && 'Sin imprevistos'].filter(Boolean);
+  const steppable = !['todo', 'custom'].includes(g.r);
+  const rangoBtns = RANGOS.map(([k, l]) => `<button class="gchip ${g.r === k ? 'on' : ''}" data-r="${k}">${l}</button>`).join('');
+  const pickBtn = (key, label, val) => `<button class="gchip sel ${val ? 'on' : ''}" data-pick="${key}">${esc(val ? L.nombre(val) : label)} ▾</button>`;
+
+  view().innerHTML = `<div class="gtoolbar">
+      <div class="gchips">${rangoBtns}</div>
+      <div class="row between gnav">
+        ${steppable ? '<button class="iconbtn" data-off="-1" aria-label="Periodo anterior">‹</button>' : '<span></span>'}
+        <div class="gtitle"><strong>${esc(gLabel(from, to))}</strong><small class="muted">${n} días · comparado con los ${n} anteriores</small></div>
+        ${steppable ? `<button class="iconbtn" data-off="1" aria-label="Periodo siguiente" ${g.off >= 0 ? 'disabled' : ''}>›</button>` : '<span></span>'}
+      </div>
+      ${g.r === 'custom' ? `<div class="two"><div class="field"><label class="lbl">Desde</label><input type="date" id="gf" value="${esc(from)}"></div><div class="field"><label class="lbl">Hasta</label><input type="date" id="gt" value="${esc(to)}"></div></div>` : ''}
+      <div class="gchips">${pickBtn('cat', 'Todas las categorías', g.cat)}${pickBtn('banco', 'Todos los bancos', g.banco)}
+        <button class="gchip ${g.imp ? '' : 'on'}" data-imp>${g.imp ? 'Con imprevistos' : 'Sin imprevistos'}</button>
+        ${filtros.length ? '<button class="gchip clear" data-clear>✕ Quitar filtros</button>' : ''}</div>
     </div>
-    ${imps.length ? `<div class="card"><h3>Imprevistos por mes · ${year}</h3><div class="chartbox"><canvas id="ci1"></canvas></div></div>
-    <div class="card"><h3>En qué · ${year}</h3><div class="chartbox"><canvas id="ci2"></canvas></div></div>` : ''}
-    <div class="card"><div class="row between"><h3 style="margin:0">${isMes ? esc(mesLargo(S.mes)) : `Todo ${year}`}</h3><strong>${eur(totLista)}</strong></div>
-      <ul class="list">${lista.map((r) => `<li class="tap" data-id="${esc(r.id)}"><span class="pk-ic">${emojiFor(L.byCode[r.debe])}</span><div class="grow"><div class="t">${esc(r.concepto || '(sin concepto)')}</div><div class="s">${esc(shortDate(r.fecha))} · ${esc(L.nombre(r.debe))} · ${esc(L.nombre(r.haber))}</div></div><div class="amount">${eur(r.importe)}</div></li>`).join('') || `<li class="muted">Ningún imprevisto ${isMes ? 'este mes' : 'este año'}. 🎉</li>`}</ul></div>
-    <p class="small muted">Son los gastos que marcas como «Imprevisto» al apuntarlos. Sí cuentan en la PyG (en su propio bloque), pero no en el «gasto corriente» ni en los límites por categoría, para que no te distorsionen la media.</p>`;
-  bindG();
-  $$('#inf li[data-id]').forEach((li) => { li.onclick = () => editEntry(li.dataset.id); });
-  if (!imps.length) return;
-  let Chart; try { Chart = await chartReady(); } catch { $('#inf').insertAdjacentHTML('afterbegin', '<div class="banner warn">No se pudo cargar la librería de gráficos (¿sin conexión?).</div>'); return; }
-  const money = { callbacks: { label: (c) => `${c.dataset.label || c.label}: ${eur(c.parsed.y ?? c.parsed)}` } };
-  const labels = showMonths.map((m) => MESES[Number(m.slice(5)) - 1]);
-  S.charts.push(new Chart($('#ci1'), { type: 'bar', data: { labels, datasets: [{ label: 'Imprevistos', data: porMes, backgroundColor: showMonths.map((m) => (isMes && m === S.mes ? '#c2553a' : '#d08a2e')), borderRadius: 3 }, { type: 'line', label: 'Media', data: showMonths.map(() => round2(media)), borderColor: '#667066', borderDash: [4, 4], pointRadius: 0, borderWidth: 1.5 }] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: money }, scales: { x: { grid: { display: false } }, y: { ticks: { callback: (v) => `${fmt(v, 0)} €` } } } } }));
-  S.charts.push(new Chart($('#ci2'), { type: 'doughnut', data: { labels: cats.map(([c]) => L.nombre(c)), datasets: [{ data: cats.map(([, v]) => v), backgroundColor: cats.map((_, i) => PALETTE[i % PALETTE.length]), borderWidth: 0 }] }, options: { maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'right', labels: { boxWidth: 10 } }, tooltip: { callbacks: { label: (c) => `${c.label}: ${eur(c.parsed)}` } } } } }));
+
+    <div class="kpis g4">
+      <div class="kpi"><div class="lbl">Gastos</div><div class="val">${eur(G, 0)}</div><div class="sub">${delta(G, Gp, false)}</div></div>
+      <div class="kpi"><div class="lbl">Ingresos</div><div class="val">${eur(I, 0)}</div><div class="sub">${delta(I, Ip, true)}</div></div>
+      <div class="kpi"><div class="lbl">Ahorro</div><div class="val ${A < 0 ? 'neg' : ''}">${eur(A, 0)}</div><div class="sub">${I > 0 ? `${fmt((A / I) * 100, 0)} % de lo que entra` : '—'}</div></div>
+      <div class="kpi"><div class="lbl">Gasto por día</div><div class="val">${eur(G / diasTrans, 0)}</div><div class="sub">${to > hoy ? `${diasTrans} días transcurridos` : `en ${n} días`}</div></div>
+    </div>
+
+    <div class="ggrid">
+      <div class="card span2"><div class="row between"><h3>Entra y sale</h3><span class="small muted">por ${'<span id="gunit"></span>'}</span></div><div class="chartbox"><canvas id="g1"></canvas></div></div>
+      <div class="card"><h3>En qué se va</h3>${porCat.length ? hbars(porCat, G, groupSum(prev.gastos, 'code'), 'data-cat') : '<div class="empty">Sin gastos en este periodo.</div>'}<p class="small muted" style="margin-bottom:0">Toca una categoría para filtrar todo por ella. ▲▼ = vs periodo anterior.</p></div>
+      <div class="card"><h3>Tipo de gasto</h3><div class="chartbox"><canvas id="g2"></canvas></div></div>
+      <div class="card"><h3>Ahorro acumulado</h3><div class="chartbox sm"><canvas id="g3"></canvas></div></div>
+      <div class="card"><h3>Desde dónde pagas</h3>${porBanco.length ? hbars(porBanco, G, groupSum(prev.gastos, 'banco'), 'data-banco') : '<div class="empty">—</div>'}</div>
+      <div class="card"><h3>Qué día gastas más</h3><div class="chartbox sm"><canvas id="g4"></canvas></div><p class="small muted" style="margin-bottom:0">Media por día de la semana.</p></div>
+      <div class="card"><h3>Gastos más grandes</h3><ul class="list">${top.map((x) => `<li class="tap" data-id="${esc(x.r.id)}"><span class="pk-ic">${emojiFor(L.byCode[x.code])}</span><div class="grow"><div class="t">${esc(x.r.concepto || L.nombre(x.code))}${x.imp ? ' <span class="chip imprevisto">imprevisto</span>' : ''}</div><div class="s">${esc(shortDate(x.r.fecha))} · ${esc(L.nombre(x.code))}</div></div><div class="amount">${eur(x.v)}</div></li>`).join('') || '<li class="muted">—</li>'}</ul></div>
+      <div class="card"><div class="row between"><h3>Imprevistos</h3><strong>${eur(sumV(imps))}</strong></div>
+        <p class="small muted" style="margin-top:0">${G ? `${fmt((sumV(imps) / G) * 100, 0)} % del gasto del periodo` : ''}${L.fondo && L.inicio ? ` · en ${esc(L.nombre(L.fondo))}: ${eur(L.balanceToDate(L.fondo), 0)}` : ''}</p>
+        <ul class="list">${imps.slice(0, 8).map((x) => `<li class="tap" data-id="${esc(x.r.id)}"><span class="pk-ic">${emojiFor(L.byCode[x.code])}</span><div class="grow"><div class="t">${esc(x.r.concepto || '')}</div><div class="s">${esc(shortDate(x.r.fecha))} · ${esc(L.nombre(x.code))}</div></div><div class="amount">${eur(x.v)}</div></li>`).join('') || `<li class="muted">${g.imp ? 'Ninguno en este periodo 🎉' : 'Ocultos por el filtro'}</li>`}</ul></div>
+      ${L.inicio && n > 45 ? '<div class="card span2"><h3>Patrimonio neto</h3><div class="chartbox sm"><canvas id="g5"></canvas></div></div>' : ''}
+    </div>`;
+
+  // eventos
+  $$('[data-r]', view()).forEach((b) => { b.onclick = () => { g.r = b.dataset.r; g.off = 0; if (g.r === 'custom' && !g.from) { g.from = from; g.to = to; } viewGraficos(); }; });
+  $$('[data-off]', view()).forEach((b) => { b.onclick = () => { g.off += Number(b.dataset.off); viewGraficos(); }; });
+  $('#gf')?.addEventListener('change', (e) => { g.from = e.target.value; viewGraficos(); });
+  $('#gt')?.addEventListener('change', (e) => { g.to = e.target.value; viewGraficos(); });
+  $('[data-imp]').onclick = () => { g.imp = !g.imp; viewGraficos(); };
+  $('[data-clear]')?.addEventListener('click', () => { g.cat = ''; g.banco = ''; g.imp = true; viewGraficos(); });
+  $$('[data-pick]', view()).forEach((b) => {
+    b.onclick = () => {
+      const key = b.dataset.pick;
+      if (g[key]) { g[key] = ''; viewGraficos(); return; }
+      openPicker({ title: key === 'cat' ? 'Filtrar por categoría' : 'Filtrar por banco', selected: g[key], filter: (c) => (key === 'cat' ? kindOf(c) === 'gasto' : ['dinero', 'deuda'].includes(kindOf(c))), onPick: (code) => { g[key] = code; viewGraficos(); } });
+    };
+  });
+  $$('[data-cat]', view()).forEach((b) => { b.onclick = () => { g.cat = g.cat === b.dataset.cat ? '' : b.dataset.cat; viewGraficos(); scrollTo(0, 0); }; });
+  $$('[data-banco]', view()).forEach((b) => { b.onclick = () => { g.banco = g.banco === b.dataset.banco ? '' : b.dataset.banco; viewGraficos(); scrollTo(0, 0); }; });
+  $$('li[data-id]', view()).forEach((li) => { li.onclick = () => editEntry(li.dataset.id); });
+
+  // gráficos
+  const { unit, out: B } = gBuckets(from, to); $('#gunit').textContent = unit;
+  let Chart; try { Chart = await chartReady(); } catch { view().insertAdjacentHTML('afterbegin', '<div class="banner warn">No se pudo cargar la librería de gráficos (¿sin conexión?). Las listas sí funcionan.</div>'); return; }
+  const v = vizMode(); const S1 = v.s;
+  const money = { callbacks: { label: (c) => `${c.dataset.label ? `${c.dataset.label}: ` : ''}${eur(c.parsed.y ?? c.parsed)}` } };
+  const yAxis = { ticks: { callback: (x) => `${fmt(x, 0)} €`, maxTicksLimit: 5 }, grid: { color: v.grid }, border: { display: false } };
+  const xAxis = { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } };
+  const bar = (label, data, color, extra = {}) => ({ label, data, backgroundColor: color, borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: 'start', maxBarThickness: 28, ...extra });
+  const legend = { position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, useBorderRadius: true, borderRadius: 2 } };
+  const labels = B.map((b) => b.l);
+  const gB = B.map((b) => round2(cur.gastos.filter((x) => inB(b, x.r.fecha)).reduce((s, x) => s + x.v, 0)));
+  const iB = B.map((b) => round2(cur.ingresos.filter((x) => inB(b, x.r.fecha)).reduce((s, x) => s + x.v, 0)));
+  const hover = { mode: 'index', intersect: false };
+  S.charts.push(new Chart($('#g1'), { type: 'bar', data: { labels, datasets: [bar('Ingresos', iB, S1[0]), bar('Gastos', gB, S1[1])] }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend, tooltip: money }, scales: { x: xAxis, y: yAxis }, datasets: { bar: { categoryPercentage: 0.7, barPercentage: 0.9 } } } }));
+  // tipo de gasto apilado (orden fijo de bloques = color fijo)
+  const BLQ = [['fijos', 'Fijos', S1[0]], ['variables', 'Variables', S1[2]], ['imprevistos', 'Imprevistos', S1[1]], ['financieros', 'Hipoteca y otros', S1[6]]];
+  const blqData = BLQ.map(([k, l, c]) => bar(l, B.map((b) => round2(cur.gastos.filter((x) => x.bloque === k && inB(b, x.r.fecha)).reduce((s, x) => s + x.v, 0))), c, { borderColor: v.surface, borderWidth: { top: 2 }, borderRadius: 0 })).filter((d) => d.data.some((x) => x));
+  S.charts.push(new Chart($('#g2'), { type: 'bar', data: { labels, datasets: blqData }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend, tooltip: money }, scales: { x: { ...xAxis, stacked: true }, y: { ...yAxis, stacked: true } } } }));
+  let acc = 0; const accData = B.map((b, i) => (b.a > hoy ? null : (acc = round2(acc + iB[i] - gB[i]))));
+  S.charts.push(new Chart($('#g3'), { type: 'line', data: { labels, datasets: [{ label: 'Ahorro acumulado', data: accData, borderColor: S1[2], backgroundColor: 'transparent', borderWidth: 2, tension: 0.25, pointRadius: B.length > 20 ? 0 : 4, pointHoverRadius: 5, pointBackgroundColor: S1[2], pointBorderColor: v.surface, pointBorderWidth: 2 }] }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend: { display: false }, tooltip: money }, scales: { x: xAxis, y: yAxis } } }));
+  const DOW = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']; const cnt = Array(7).fill(0); const tot = Array(7).fill(0);
+  for (let d = from; d <= to; d = addDays(d, 1)) cnt[(dOf(d).getDay() + 6) % 7]++;
+  cur.gastos.filter((x) => x.bloque === 'variables' || x.bloque === 'imprevistos').forEach((x) => { tot[(dOf(x.r.fecha).getDay() + 6) % 7] += x.v; });
+  S.charts.push(new Chart($('#g4'), { type: 'bar', data: { labels: DOW, datasets: [bar('Media', tot.map((t, i) => (cnt[i] ? round2(t / cnt[i]) : 0)), S1[0])] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: money }, scales: { x: xAxis, y: yAxis } } }));
+  if ($('#g5')) {
+    const ms = monthsBetween(ym(from) < ym(L.inicio) ? ym(L.inicio) : ym(from), ym(to < hoy ? to : hoy));
+    S.charts.push(new Chart($('#g5'), { type: 'line', data: { labels: ms.map((m) => `${MESES[Number(m.slice(5)) - 1]} ${m.slice(2, 4)}`), datasets: [{ label: 'Patrimonio neto', data: ms.map((m) => L.balance(m).patrimonioNeto), borderColor: S1[0], borderWidth: 2, tension: 0.25, pointRadius: 3, pointBackgroundColor: S1[0], pointBorderColor: v.surface, pointBorderWidth: 2 }] }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend: { display: false }, tooltip: money }, scales: { x: xAxis, y: yAxis } } }));
+  }
 }
 
 // ---------- presupuesto ----------
