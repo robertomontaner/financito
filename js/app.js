@@ -866,17 +866,23 @@ function mayorCuenta(code) {
   const sd = round2(d.reduce((s, r) => s + r.importe, 0)); const sh = round2(h.reduce((s, r) => s + r.importe, 0));
   const fin = round2(ini + (dn ? sd - sh : sh - sd));
   const tLine = (r, side) => `<div class="t-line tap" data-id="${esc(r.id)}"><span class="t-date">${esc(shortDate(r.fecha))}</span><span class="t-desc">${esc(r.concepto || '')}<small><a href="#" class="t-go" data-go="${esc(side === 'd' ? r.haber : r.debe)}">${esc(L.nombre(side === 'd' ? r.haber : r.debe))}</a></small></span><span class="t-amt">${fmt(r.importe)}</span></div>`;
-  const other = (k === 'gasto' ? 'Una cuenta de gasto casi solo tiene <strong>debe</strong>: cada gasto la hace crecer. La otra mitad de cada apunte está en el <strong>haber del banco</strong> con el que pagaste. Toca el nombre del banco para verlo.'
-    : k === 'ingreso' ? 'Una cuenta de ingreso casi solo tiene <strong>haber</strong>. La otra mitad de cada apunte está en el <strong>debe del banco</strong> donde entró el dinero. Toca el nombre del banco para verlo.'
+  // la otra mitad del apunte (la cuenta que se mueve en sentido contrario), en gris y sin sumar
+  const VERB = { dinero: ['entra en', 'sale de'], deuda: ['devuelves a', 'debes más a'], gasto: ['gasto en', 'gasto en'], ingreso: ['ingreso de', 'ingreso de'], bien: ['compras', 'vendes'] };
+  const ghost = (r, side) => { const oc = side === 'd' ? r.haber : r.debe; const ok = L.kind(oc); const verb = (VERB[ok] || ['contrapartida', 'contrapartida'])[side === 'd' ? 1 : 0];
+    return `<a href="#" class="t-ghost" data-go="${esc(oc)}"><span class="t-gv">${esc(verb)}</span><span class="t-gn">${emojiFor(L.byCode[oc])} ${esc(L.nombre(oc))}</span><span class="t-ga">${fmt(r.importe)}</span></a>`; };
+  const other = (k === 'gasto' ? 'Cada gasto va al <strong>debe</strong> de su categoría y, a la vez, al <strong>haber del banco</strong> con el que pagaste (el dinero sale de ahí). En gris ves esa otra mitad: no suma en esta cuenta, suma en la T del banco. Tócala para ir allí.'
+    : k === 'ingreso' ? 'Cada ingreso va al <strong>haber</strong> de su tipo y, a la vez, al <strong>debe del banco</strong> donde entró el dinero. En gris ves esa otra mitad: no suma aquí, suma en la T del banco. Tócala para ir allí.'
     : k === 'dinero' ? 'En un banco el <strong>debe</strong> es lo que entra (ingresos, traspasos recibidos) y el <strong>haber</strong> lo que sale (gastos, traspasos enviados). Toca la cuenta en gris para ir a la otra mitad del apunte.' : '');
   $('#inf').innerHTML = `${periodBar(() => mayorCuenta(code))}
     <div class="row between" style="margin-bottom:8px"><button class="btn sm" id="back">‹ Todas las cuentas</button><span class="chip">${esc(c ? KIND_LABEL[kindOf(c)] : L.tipo(code))}</span></div>
     <div class="taccount">
       <div class="t-title"><span class="pk-ic">${emojiFor(c)}</span><div><div class="t-name">${esc(L.nombre(code))}</div><div class="small muted">Cuenta ${esc(code)} · ${pyg ? 'acumulado del año antes de este periodo' : 'saldo inicial'} ${eur(ini)}</div></div></div>
-      <div class="t-cols">
-        <div class="t-col"><div class="t-h">Debe <small>${dn ? 'suma' : 'resta'}</small></div>${d.map((r) => tLine(r, 'd')).join('') || '<div class="t-empty">—</div>'}<div class="t-sum">${fmt(sd)}</div></div>
-        <div class="t-col"><div class="t-h">Haber <small>${dn ? 'resta' : 'suma'}</small></div>${h.map((r) => tLine(r, 'h')).join('') || '<div class="t-empty">—</div>'}<div class="t-sum">${fmt(sh)}</div></div>
+      <div class="t-grid ${S.verMitad === false ? '' : 'ghosts'}">
+        <div class="t-cell l t-h">Debe <small>${dn ? 'suma' : 'resta'}</small></div><div class="t-cell t-h">Haber <small>${dn ? 'resta' : 'suma'}</small></div>
+        ${rows.map((r) => { const side = r.debe === code ? 'd' : 'h'; const real = tLine(r, side); const gh = S.verMitad === false ? '' : ghost(r, side); return side === 'd' ? `<div class="t-cell l">${real}</div><div class="t-cell">${gh}</div>` : `<div class="t-cell l">${gh}</div><div class="t-cell">${real}</div>`; }).join('') || '<div class="t-cell l"><div class="t-empty">—</div></div><div class="t-cell"><div class="t-empty">—</div></div>'}
+        <div class="t-cell l"><div class="t-sum">${fmt(sd)}</div></div><div class="t-cell"><div class="t-sum">${fmt(sh)}</div></div>
       </div>
+      <div class="row between" style="margin-top:8px"><button class="btn sm" id="mitad">${S.verMitad === false ? 'Ver la otra mitad de cada apunte' : 'Ocultar la otra mitad'}</button></div>
       <div class="t-saldo">${pyg ? 'Acumulado' : 'Saldo final'} <strong class="${cls(fin)}">${eur(fin)}</strong></div>
     </div>
     ${other ? `<p class="small muted" style="margin:8px 2px">${other}</p>` : ''}
@@ -886,6 +892,7 @@ function mayorCuenta(code) {
       ${rows.map((r) => { saldo = round2(saldo + sign(r)); return `<tr class="tap" data-id="${esc(r.id)}"><td>${esc(shortDate(r.fecha))}</td><td>${esc(r.concepto || '')} <span class="muted">· <a href="#" class="t-go" data-go="${esc(r.debe === code ? r.haber : r.debe)}">${esc(L.nombre(r.debe === code ? r.haber : r.debe))}</a></span></td><td class="n">${r.debe === code ? fmt(r.importe) : ''}</td><td class="n">${r.haber === code ? fmt(r.importe) : ''}</td><td class="n">${fmt(saldo)}</td></tr>`; }).join('')}
     </table></div>`;
   $('#back').onclick = () => { S.mayorCuenta = ''; infMayor(); };
+  $('#mitad').onclick = () => { S.verMitad = S.verMitad === false; mayorCuenta(code); };
   $$('#inf [data-id]').forEach((el) => { el.onclick = () => editEntry(el.dataset.id); });
   $$('#inf [data-go]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); S.mayorCuenta = a.dataset.go; mayorCuenta(a.dataset.go); scrollTo(0, 0); }; });
 }

@@ -337,3 +337,15 @@ table.rep tr.sec2 + tr td:first-child, table.rep tr.sec2 ~ tr.tap td:first-child
 .hb-val small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
 .pk-ic.sm { width: 24px; height: 24px; font-size: 14px; flex: 0 0 24px; }
 @media (min-width: 721px) { .gtoolbar { position: sticky; top: calc(env(safe-area-inset-top) + 57px); z-index: 6; } }
+
+/* T de una cuenta con la otra mitad alineada */
+.t-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-top: 2px solid var(--text); }
+.t-cell { min-width: 0; padding: 0 8px; }
+.t-cell.l { border-right: 2px solid var(--text); }
+.t-cell.t-h { padding-top: 6px; }
+.t-cell .t-line { min-height: 44px; }
+.t-ghost { display: grid; grid-template-columns: 1fr auto; column-gap: 6px; align-items: baseline; min-height: 44px; padding: 3px 6px; margin: 2px 0; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); text-decoration: none; font-size: 12px; background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--surface-2) 70%, transparent) 6px 7px); }
+.t-gv { grid-column: 1 / -1; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
+.t-gn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); opacity: .75; }
+.t-ga { font-variant-numeric: tabular-nums; font-style: italic; }
+.t-grid.ghosts .t-desc small { display: none; }
