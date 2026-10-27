@@ -901,6 +901,9 @@ function mayorCuenta(code) {
   const fin = round2(ini + (dn ? sd - sh : sh - sd));
   const tLine = (r) => `<div class="t-line tap" data-id="${esc(r.id)}"><span class="t-date">${esc(shortDate(r.fecha))}</span><span class="t-desc">${esc(r.concepto || '')}</span><span class="t-amt">${fmt(r.importe)}</span>${tipBtn(r)}</div>`;
   const area = AREA[k] || 'Balance';
+  // cada movimiento con sus dos cuentas: a la izquierda la que va al debe, a la derecha la que va al haber
+  const aCell = (acc, imp, side, r) => { const kk = L.kind(acc); const ar = AREA[kk] || 'Balance'; const me = acc === code;
+    return `<div class="a-cell ${side === 'd' ? 'l' : ''} ${me ? 'me' : ''}"><span class="a-acc">${emojiFor(L.byCode[acc])} ${me ? `<strong>${esc(L.nombre(acc))}</strong>` : `<a href="#" class="t-go" data-go="${esc(acc)}">${esc(L.nombre(acc))}</a>`}<small><span class="chip area-${ar === 'PyG' ? 'pyg' : 'bal'}">${ar}</span> ${esc((MOVE[kk] || MOVE.contable)[side === 'd' ? 0 : 1])}</small></span><span class="a-amt">${fmt(imp)}</span></div>`; };
   const other = k === 'gasto' ? 'Solo los movimientos reales de esta cuenta. Pasa el ratón (o toca) por <span class="tip-i">i</span> para ver el asiento completo: de qué banco salió el dinero.'
     : k === 'ingreso' ? 'Solo los movimientos reales de esta cuenta. Pasa el ratón (o toca) por <span class="tip-i">i</span> para ver en qué banco entró el dinero.'
     : k === 'dinero' ? 'En un banco el <strong>debe</strong> es lo que entra y el <strong>haber</strong> lo que sale. Pasa el ratón (o toca) por <span class="tip-i">i</span> para ver a qué gasto, ingreso o cuenta va cada movimiento.' : '';
@@ -908,19 +911,26 @@ function mayorCuenta(code) {
     <div class="row between" style="margin-bottom:8px"><button class="btn sm" id="back">‹ Todas las cuentas</button><span class="chip">${esc(c ? KIND_LABEL[kindOf(c)] : L.tipo(code))}</span></div>
     <div class="taccount">
       <div class="t-title"><span class="pk-ic">${emojiFor(c)}</span><div class="grow"><div class="t-name">${esc(L.nombre(code))} <span class="chip area-${area === 'PyG' ? 'pyg' : 'bal'}">${area}</span></div><div class="small muted">Cuenta ${esc(code)} · ${pyg ? 'acumulado del año antes de este periodo' : 'saldo inicial'} ${eur(ini)}</div></div></div>
-      <div class="t-cols">
+      ${S.mayorModo === 'clasica' ? `<div class="t-cols">
         <div class="t-col"><div class="t-h">Debe <small>${dn ? 'suma' : 'resta'}</small></div>${d.map(tLine).join('') || '<div class="t-empty">—</div>'}<div class="t-sum">${fmt(sd)}</div></div>
         <div class="t-col"><div class="t-h">Haber <small>${dn ? 'resta' : 'suma'}</small></div>${h.map(tLine).join('') || '<div class="t-empty">—</div>'}<div class="t-sum">${fmt(sh)}</div></div>
-      </div>
+      </div>` : `<div class="a-grid">
+        <div class="a-h l">Debe</div><div class="a-h">Haber</div>
+        ${rows.map((r) => `<div class="a-row tap" data-id="${esc(r.id)}"><div class="a-concept"><span class="muted">${esc(shortDate(r.fecha))}</span> ${esc(r.concepto || '')}</div>${aCell(r.debe, r.importe, 'd', r)}${aCell(r.haber, r.importe, 'h', r)}</div>`).join('') || '<div class="t-empty" style="grid-column:1/-1">Sin movimientos en este periodo.</div>'}
+        <div class="a-sum l">${fmt(sd + sh)}</div><div class="a-sum">${fmt(sd + sh)} <b class="pos">✓</b></div>
+      </div>`}
+      <div class="row between" style="margin-top:10px;gap:8px;flex-wrap:wrap"><div class="seg mini"><button data-modo="asiento" class="${S.mayorModo !== 'clasica' ? 'on' : ''}">Con su pareja</button><button data-modo="clasica" class="${S.mayorModo === 'clasica' ? 'on' : ''}">T clásica</button></div>
+        <span class="small muted">${S.mayorModo === 'clasica' ? 'Solo esta cuenta' : `Resaltado: ${esc(L.nombre(code))} · ${dn ? 'debe sube, haber baja' : 'haber sube, debe baja'}`}</span></div>
       <div class="t-saldo">${pyg ? 'Acumulado' : 'Saldo final'} <strong class="${cls(fin)}">${eur(fin)}</strong></div>
     </div>
-    ${other ? `<p class="small muted" style="margin:8px 2px">${other}</p>` : ''}
+    ${S.mayorModo === 'clasica' ? (other ? `<p class="small muted" style="margin:8px 2px">${other}</p>` : '') : `<p class="small muted" style="margin:8px 2px">Cada fila es un movimiento con sus dos cuentas: lo que va al <strong>debe</strong> a la izquierda y lo que va al <strong>haber</strong> a la derecha. ${k === 'dinero' ? `Si ${esc(L.nombre(code))} está en el haber, es que <strong>baja</strong> (sale dinero); si está en el debe, <strong>sube</strong>.` : k === 'gasto' ? 'El gasto sube en el debe y, enfrente, el banco del que salió baja en el haber.' : ''} El saldo solo cuenta la cuenta resaltada.</p>`}
     <h3>Movimiento a movimiento</h3>
     <div class="tablewrap"><table class="rep"><tr><th>Fecha</th><th>Concepto · contrapartida</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr>
       <tr class="dim"><td>${esc(shortDate(from))}</td><td>${pyg ? 'Acumulado del año' : 'Saldo inicial'}</td><td></td><td></td><td class="n">${fmt(ini)}</td></tr>
       ${rows.map((r) => { saldo = round2(saldo + sign(r)); return `<tr class="tap" data-id="${esc(r.id)}"><td>${esc(shortDate(r.fecha))}</td><td>${esc(r.concepto || '')} <span class="muted">· <a href="#" class="t-go" data-go="${esc(r.debe === code ? r.haber : r.debe)}">${esc(L.nombre(r.debe === code ? r.haber : r.debe))}</a></span></td><td class="n">${r.debe === code ? fmt(r.importe) : ''}</td><td class="n">${r.haber === code ? fmt(r.importe) : ''}</td><td class="n">${fmt(saldo)}</td></tr>`; }).join('')}
     </table></div>`;
   $('#back').onclick = () => { S.mayorCuenta = ''; infMayor(); };
+  $$('#inf [data-modo]').forEach((b) => { b.onclick = () => { S.mayorModo = b.dataset.modo; mayorCuenta(code); }; });
   $$('#inf [data-id]').forEach((el) => { el.onclick = () => editEntry(el.dataset.id); });
   bindTips($('#inf'));
   $$('#inf [data-go]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); S.mayorCuenta = a.dataset.go; mayorCuenta(a.dataset.go); scrollTo(0, 0); }; });
