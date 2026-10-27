@@ -8,6 +8,8 @@ export const TABLES = {
   Prestamos: ['id', 'nombre', 'capital', 'interes_anual', 'plazo_meses', 'primera_cuota', 'cuenta_banco', 'cuenta_pasivo', 'cuenta_interes', 'activo'],
   Presupuesto: ['id', 'mes', 'cuenta', 'importe', 'borrado'],
   Saldos: ['id', 'fecha', 'cuenta', 'saldo', 'notas'],
+  Reparto: ['id', 'orden', 'hacia', 'importe', 'activo', 'borrado'],
+  RepartoMes: ['id', 'mes', 'linea', 'hacia', 'importe', 'borrado'],
   Config: ['clave', 'valor'],
 };
 
@@ -195,18 +197,78 @@ export class Libro {
         const t = this.tipo(code);
         if (t !== 'gasto' && t !== 'ingreso') continue;
         const sign = t === 'gasto' ? (side === 'd' ? 1 : -1) : (side === 'h' ? 1 : -1);
-        val[code] ??= cols.map(() => 0);
-        for (const i of idx) { val[code][i] += sign * r.importe; if (t === 'gasto' && r.clase === 'imprevisto') imp[i] += sign * r.importe; }
+        const key = t === 'gasto' && r.clase === 'imprevisto' ? `imp:${code}` : code;
+        val[key] ??= cols.map(() => 0);
+        for (const i of idx) { val[key][i] += sign * r.importe; if (t === 'gasto' && r.clase === 'imprevisto') imp[i] += sign * r.importe; }
       }
     }
-    const build = (tipo) => Object.keys(val).filter((c) => this.tipo(c) === tipo)
-      .map((c) => ({ code: c, nombre: this.nombre(c), grupo: displayGroup(this.byCode[c]) || '', values: val[c].map(round2) }))
+    const codeOf = (k) => k.replace(/^imp:/, '');
+    const build = (tipo) => Object.keys(val).filter((k) => this.tipo(codeOf(k)) === tipo)
+      .map((k) => ({ key: k, code: codeOf(k), nombre: this.nombre(codeOf(k)), grupo: displayGroup(this.byCode[codeOf(k)]) || '', bloque: this.bloque(codeOf(k), k.startsWith('imp:')), values: val[k].map(round2) }))
       .filter((r) => r.values.some((v) => Math.abs(v) > 0.004))
       .sort((a, b) => a.code.localeCompare(b.code));
     const ingresos = build('ingreso'); const gastos = build('gasto');
     const sum = (list) => cols.map((_, i) => round2(list.reduce((s, r) => s + r.values[i], 0)));
     const ti = sum(ingresos); const tg = sum(gastos);
     return { cols, ingresos, gastos, totalIngresos: ti, totalGastos: tg, resultado: ti.map((v, i) => round2(v - tg[i])), imprevistos: imp.map(round2) };
+  }
+
+  // bloque de la PyG: ingresos | fijos | variables | imprevistos | financieros
+  bloque(code, imprevisto = false) {
+    const t = this.tipo(code);
+    if (t === 'ingreso') return 'ingresos';
+    if (imprevisto) return 'imprevistos';
+    if (['659', '662', '663', '681'].includes(code) || ['Gastos financieros', 'Amortizaciones', 'Otros gastos'].includes(this.byCode[code]?.grupo)) return 'financieros';
+    if (this.byCode[code]?.grupo === 'Gastos fijos') return 'fijos';
+    return 'variables';
+  }
+
+  // ---------- plan del mes (reparto) ----------
+  get principal() { return String(this.config.cuenta_principal || (this.byCode['5721'] ? '5721' : '')); }
+  get fondo() { return String(this.config.cuenta_fondo || (this.byCode['5726'] ? '5726' : '')); }
+  repRow(m, linea) { return this.activeRows.find((r) => r.origen === `rep:${m}:${linea}`); }
+  planMes(m) {
+    const snapAll = (this.db.RepartoMes || []).filter((x) => x.mes === m);
+    const hasSnap = snapAll.length > 0;
+    const tpl = (this.db.Reparto || []).filter((x) => !truthy(x.borrado) && truthy(x.activo === '' ? 1 : x.activo)).sort((a, b) => num(a.orden) - num(b.orden));
+    const src = hasSnap ? snapAll.filter((x) => !truthy(x.borrado) && x.linea !== 'ingresos') : tpl.map((t) => ({ linea: t.id, hacia: t.hacia, importe: t.importe, tpl: t }));
+    const lines = src.map((x) => {
+      const code = String(x.hacia); const c = this.byCode[code];
+      const done = this.repRow(m, x.linea);
+      const grupo = code === this.fondo ? 'fondo' : (c?.grupo === 'Inversiones' ? 'ahorro' : 'sobre');
+      let gastado = 0;
+      if (grupo === 'sobre') for (const r of this.activeRows) if (ym(r.fecha) === m && r.haber === code && this.tipo(r.debe) === 'gasto' && r.clase !== 'imprevisto') gastado += r.importe;
+      const plan = num(x.importe);
+      return { ...x, linea: String(x.linea), code, nombre: this.nombre(code), grupo, plan, real: done ? done.importe : 0, done, gastado: round2(gastado), snap: hasSnap ? x : null, tpl: x.tpl || tpl.find((t) => String(t.id) === String(x.linea)) || null };
+    });
+    const ingSnap = snapAll.find((x) => x.linea === 'ingresos' && !truthy(x.borrado));
+    const ingresosPlan = num(ingSnap ? ingSnap.importe : this.config.ingreso_previsto);
+    const ingresosReal = this.ingresoMes(m);
+    const fijos = (this.db.Recurrentes || []).filter((r) => r.nombre && !String(r.nombre).endsWith('(borrada)') && (r.clase || 'corriente') === 'corriente' && this.tipo(String(r.debe)) === 'gasto'
+      && String(r.desde).slice(0, 7) <= m && (!r.hasta || String(r.hasta).slice(0, 7) >= m))
+      .map((r) => {
+        const real = this.activeRows.filter((x) => x.origen === `rec:${r.id}:${m}`).reduce((s, x) => s + x.importe, 0);
+        return { id: r.id, nombre: r.nombre, code: String(r.debe), activo: truthy(r.activo), plan: truthy(r.activo) ? num(r.importe) : 0, real: round2(real), rec: r };
+      });
+    const sum = (l, k) => round2(l.reduce((s, x) => s + x[k], 0));
+    const tot = { fijosPlan: sum(fijos, 'plan'), fijosReal: sum(fijos, 'real'), repartoPlan: sum(lines, 'plan'), repartoReal: sum(lines, 'real') };
+    return {
+      m, hasSnap, lines, fijos, ingresosPlan, ingresosReal, ingSnap, ...tot,
+      pendientes: lines.filter((l) => !l.done && l.plan > 0),
+      sobrantePlan: round2(ingresosPlan - tot.fijosPlan - tot.repartoPlan),
+      sobranteReal: round2(ingresosReal - tot.fijosReal - tot.repartoReal),
+    };
+  }
+
+  // dónde ha acabado el ahorro de un mes: variación de cada cuenta de balance
+  dondeAhorro(m) {
+    const prev = addMonths(m, -1); const out = [];
+    for (const c of this.allCodes()) {
+      const t = this.tipo(c); if (t !== 'activo' && t !== 'pasivo') continue;
+      const d = round2(this.balanceAt(c, m) - this.balanceAt(c, prev));
+      if (Math.abs(d) > 0.004) out.push({ code: c, nombre: this.nombre(c), kind: kindOf(this.byCode[c] || { codigo: c, tipo: t }), aporta: t === 'pasivo' ? -d : d });
+    }
+    return out.sort((a, b) => b.aporta - a.aporta);
   }
 
   accountsOf(tipo) { return this.cuentas.filter((c) => c.tipo === tipo); }

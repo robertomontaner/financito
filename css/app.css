@@ -221,3 +221,11 @@ details.card summary { cursor: pointer; font-weight: 600; }
 .pk-new { border-style: dashed; margin-top: 8px; }
 .list li .pk-ic { flex: 0 0 34px; }
 .two > * { min-width: 0; }
+.chip.ok { background: var(--accent-soft); color: var(--accent); }
+.kpiv { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+#topbar-actions { display: flex; align-items: center; gap: 6px; }
+#topbar-actions .iconbtn { text-decoration: none; font-size: 20px; }
+#topbar-actions .iconbtn.on { color: var(--accent); }
+.card + details.card, .card + .banner, .banner + .card { margin-top: 12px; }
+table.rep tr.sec2 td { font-weight: 650; background: color-mix(in srgb, var(--surface-2) 55%, var(--surface)); }
+table.rep tr.sec2 + tr td:first-child, table.rep tr.sec2 ~ tr.tap td:first-child { padding-left: 18px; }

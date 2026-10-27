@@ -315,13 +315,13 @@ function renderReconnect() {
 }
 
 // ---------------- router ----------------
-const ROUTES = { inicio: viewInicio, apuntar: viewApuntar, diario: viewDiario, informes: viewInformes, ajustes: viewAjustes };
+const ROUTES = { inicio: viewInicio, mes: viewMes, apuntar: viewApuntar, diario: viewDiario, informes: viewInformes, ajustes: viewAjustes };
 function render() {
   if (!S.libro) return;
   const r = (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'inicio';
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.r === r));
-  $('#title').textContent = { inicio: 'Financito', apuntar: 'Apuntar', diario: 'Diario', informes: 'Informes', ajustes: 'Ajustes' }[r] || 'Financito';
-  $('#topbar-actions').innerHTML = S.store.kind === 'demo' ? '<span class="chip">modo demo</span>' : '';
+  $('#title').textContent = { inicio: 'Financito', mes: 'Mes', apuntar: 'Apuntar', diario: 'Diario', informes: 'Informes', ajustes: 'Ajustes' }[r] || 'Financito';
+  $('#topbar-actions').innerHTML = `${S.store.kind === 'demo' ? '<span class="chip">demo</span>' : ''}<a href="#/ajustes" class="iconbtn ${r === 'ajustes' ? 'on' : ''}" aria-label="Ajustes">⚙</a>`;
   (ROUTES[r] || viewInicio)();
   view().focus({ preventScroll: true });
 }
@@ -333,7 +333,7 @@ function viewInicio() {
   const ingresos = L.ingresoMes(mes);
   const bal = L.balance(mes);
   const tes = L.inicio ? L.cuentas.filter((c) => (isMoney(c) || kindOf(c) === 'deuda') && Math.abs(L.balanceToDate(c.codigo)) > 0.004) : [];
-  const sob = L.presupuesto(mes);
+  const sob = L.presupuesto(mes).filter((p) => L.kind(p.code) === 'gasto');
   const last = [...L.activeRows].sort((a, b) => (b.fecha + b.creado).localeCompare(a.fecha + a.creado)).slice(0, 6);
   const diff = g.total - gp.total;
   const top = Object.entries(g.porCuenta).sort((a, b) => b[1] - a[1]).slice(0, 6);
@@ -342,13 +342,14 @@ function viewInicio() {
     ${S.autoMsg ? `<div class="banner">⚙ ${esc(S.autoMsg)}</div>` : ''}
     ${S.store.kind === 'demo' ? '<div class="banner warn">Estás en modo demo: los datos son de ejemplo y solo se guardan en este navegador.</div>' : ''}
     <h1 style="text-transform:capitalize">${esc(mesLargo(mes))}</h1>
+    ${(() => { const P = L.planMes(mes); return P.pendientes.length ? `<a class="banner" href="#/mes" style="display:block;text-decoration:none">📬 Reparto de ${esc(MESES_LARGOS_MES(mes))} pendiente: ${P.pendientes.length} traspaso${P.pendientes.length > 1 ? 's' : ''} por ${eur(P.pendientes.reduce((s2, l) => s2 + l.plan, 0), 0)} →</a>` : ''; })()}
     <div class="kpis">
       <div class="kpi"><div class="lbl">Gasto corriente del mes</div><div class="val">${eur(g.total)}</div><div class="sub">${gp.total ? `${diff >= 0 ? '+' : ''}${eur(diff, 0)} vs ${MESES[Number(prev.slice(5)) - 1].toLowerCase()} (${eur(gp.total, 0)})` : 'sin imprevistos ni amortizaciones'}</div></div>
       <div class="kpi"><div class="lbl">Ingresos del mes</div><div class="val">${eur(ingresos, 0)}</div><div class="sub">Resultado: <span class="${cls(ingresos - g.total)}">${eur(round2(L.pyg(mes.slice(0, 4)).resultado[Number(mes.slice(5)) - 1]), 0)}</span></div></div>
       <div class="kpi"><div class="lbl">Patrimonio neto</div><div class="val">${L.inicio ? eur(bal.patrimonioNeto, 0) : '—'}</div><div class="sub">${L.inicio ? 'lo que tienes − lo que debes' : 'falta meter saldos iniciales'}</div></div>
     </div>
 
-    ${sob.length ? `<h2>Presupuesto de ${esc(MESES[Number(mes.slice(5)) - 1].toLowerCase())}</h2><div class="card">${sobresHtml(sob.slice(0, 6))}<div style="margin-top:8px"><a href="#/informes" data-inf="sobres" class="small">Ver presupuesto completo →</a></div></div>` : ''}
+    ${sob.length ? `<h2>Límites de ${esc(MESES[Number(mes.slice(5)) - 1].toLowerCase())}</h2><div class="card">${sobresHtml(sob.slice(0, 6))}<div style="margin-top:8px"><a href="#/mes" class="small">Ver el mes completo →</a></div></div>` : ''}
 
     ${top.length ? `<h2>En qué se va este mes</h2><div class="card"><ul class="list">${top.map(([c, v]) => `<li><div class="grow"><div class="t">${esc(L.nombre(c))}</div><div class="bar"><span style="width:${Math.min(100, (v / (top[0][1] || 1)) * 100)}%"></span></div></div><div class="amount">${eur(v)}</div></li>`).join('')}</ul></div>` : ''}
 
@@ -497,6 +498,192 @@ function editEntry(id) {
   });
 }
 
+// ---------------- MES (plan y reparto, criterio de caja) ----------------
+const PLANTILLA_2026 = [['5722', 200], ['5724', 100], ['5725', 100], ['5723', 110], ['5726', 100], ['540', 1100]];
+const GRUPO_REP = { sobre: ['Sobres para gastar', 'Dinero que mandas a una cuenta para gastar desde ella.'], fondo: ['Imprevistos', 'Lo que apartas para lo que no se puede prever.'], ahorro: ['Ahorro e inversión', 'Lo que mandas a largo plazo.'] };
+
+function viewMes() {
+  const L = S.libro; const m = S.mes; const P = L.planMes(m);
+  const tplVacia = !(L.db.Reparto || []).some((x) => !truthy(x.borrado));
+  const principal = L.principal; const nPrin = principal ? L.nombre(principal) : 'tu cuenta principal';
+  const curMonth = ym(todayISO());
+  const tick = (ok, plan) => (ok ? '<span class="chip ok">✓ hecho</span>' : plan > 0 ? '<span class="chip">pendiente</span>' : '');
+  const money = (v) => `<span class="amount">${eur(v, Math.abs(v) % 1 ? 2 : 0)}</span>`;
+  const linesHtml = ['sobre', 'fondo', 'ahorro'].map((g) => {
+    const list = P.lines.filter((l) => l.grupo === g); if (!list.length) return '';
+    return `<h3>${GRUPO_REP[g][0]}</h3><ul class="list">${list.map((l) => {
+      let sub = '';
+      if (g === 'sobre') { const q = round2((l.done ? l.real : l.plan) - l.gastado); sub = `gastado ${eur(l.gastado)} · <span class="${q < 0 ? 'neg' : ''}">${q < 0 ? `te pasas ${eur(-q)}` : `quedan ${eur(q)}`}</span>`; }
+      if (g === 'fondo' && L.inicio) sub = `en el fondo: ${eur(L.balanceToDate(l.code))}`;
+      if (g === 'ahorro' && L.inicio) sub = `saldo: ${eur(L.balanceToDate(l.code))}`;
+      return `<li class="tap" data-line="${esc(l.linea)}"><span class="pk-ic">${emojiFor(L.byCode[l.code])}</span><div class="grow"><div class="t">${esc(l.nombre)} ${tick(l.done, l.plan)}</div><div class="s">${sub}</div></div>${money(l.done ? l.real : l.plan)}</li>`;
+    }).join('')}</ul>`;
+  }).join('');
+  const fijosHtml = P.fijos.length ? `<ul class="list">${P.fijos.map((f) => `<li class="tap" data-fijo="${esc(f.id)}"><span class="pk-ic">${emojiFor(L.byCode[f.code])}</span><div class="grow"><div class="t">${esc(f.nombre)} ${f.activo ? tick(f.real > 0, f.plan) : '<span class="chip">pausada</span>'}</div><div class="s">${f.activo ? `día ${esc(f.rec.dia)} · se apunta solo` : 'tócala para activarla'}</div></div>${money(f.real || f.plan || num(f.rec.importe))}</li>`).join('')}</ul>` : '<div class="empty">Sin gastos fijos. Se crean como automatizaciones.</div>';
+  const limites = L.presupuesto(m).filter((p) => L.kind(p.code) === 'gasto');
+  const doneAll = P.lines.length && !P.pendientes.length;
+  const pendTotal = round2(P.pendientes.reduce((s, l) => s + l.plan, 0));
+
+  view().innerHTML = `${periodBar(viewMes, { allowYear: false })}
+    ${tplVacia && !P.hasSnap ? `<div class="card" style="margin-bottom:12px"><strong>Monta tu reparto mensual</strong><p class="small muted">Es tu hoja de Excel: lo que entra cada mes y a qué cuenta lo mandas. Puedes empezar con lo que usabas en 2026 y cambiarlo después.</p>
+      <div class="stack"><button class="btn primary block" id="tpl2026">Empezar con mi reparto de 2026</button><button class="btn block" id="tplvacia">Empezar en blanco</button></div></div>` : ''}
+
+    <div class="card">
+      <div class="row between"><h3 style="margin:0">Ingresos</h3><button class="btn sm" id="editIng">Previsto: ${eur(P.ingresosPlan, 0)}</button></div>
+      <div class="row between" style="margin-top:8px"><span class="muted small">Entrado este mes</span><strong class="num">${eur(P.ingresosReal)}</strong></div>
+      ${P.ingresosPlan ? `<div class="bar"><span style="width:${Math.min(100, (P.ingresosReal / P.ingresosPlan) * 100)}%"></span></div>` : ''}
+    </div>
+
+    <div class="card"><div class="row between"><h3 style="margin:0">Gastos fijos</h3><span class="num"><strong>${eur(P.fijosPlan, 0)}</strong></span></div>${fijosHtml}
+      <button class="btn sm" id="addFijo" style="margin-top:8px">+ Gasto fijo</button></div>
+
+    <div class="card"><div class="row between"><h3 style="margin:0">Reparto a cuentas</h3><span class="num"><strong>${eur(P.repartoPlan, 0)}</strong></span></div>
+      ${linesHtml || '<div class="empty">Sin líneas de reparto.</div>'}
+      <button class="btn sm" id="addLine" style="margin-top:8px">+ Añadir línea</button></div>
+
+    <div class="card">
+      <div class="row between"><div><h3 style="margin:0">Se queda en ${esc(nPrin)}</h3><div class="small muted">ingresos − fijos − reparto</div></div><button class="iconbtn" id="cfgMes" aria-label="Cambiar cuenta principal">⚙</button></div>
+      <div class="two" style="margin-top:8px"><div><div class="small muted">Previsto</div><div class="kpiv ${cls(P.sobrantePlan)}">${eur(P.sobrantePlan, 0)}</div></div><div><div class="small muted">Con lo real</div><div class="kpiv ${cls(P.sobranteReal)}">${eur(P.sobranteReal, 0)}</div></div></div>
+      ${L.inicio && principal ? `<div class="small muted" style="margin-top:6px">Saldo actual de ${esc(nPrin)}: <strong>${eur(L.balanceToDate(principal))}</strong></div>` : ''}
+    </div>
+
+    ${P.lines.length ? (doneAll
+    ? `<div class="banner">✓ Reparto de ${esc(mesLargo(m))} hecho. <button class="btn sm" id="undo" style="margin-left:6px">Deshacer</button></div>`
+    : `<button class="btn primary block" id="doRep" style="margin:4px 0 12px">Hacer reparto de ${esc(MESES_LARGOS_MES(m))} · ${P.pendientes.length} traspaso${P.pendientes.length > 1 ? 's' : ''} · ${eur(pendTotal, 0)}</button>`) : ''}
+
+    <details class="card"${limites.length ? ' open' : ''}><summary>Límites por categoría${limites.length ? ` (${limites.length})` : ''}</summary>
+      <p class="small muted">Cuánto quieres gastar como máximo en cada cosa, la pagues desde donde la pagues.</p>
+      ${limites.length ? sobresHtml(limites) : ''}
+      <button class="btn sm" id="addcat" style="margin-top:8px">+ Límite de categoría</button></details>
+    <p class="small muted">${m < curMonth ? 'Mes pasado: los cambios de importe solo afectan a este mes.' : 'Al tocar una línea puedes cambiarla solo este mes o para todos los meses siguientes.'}</p>`;
+
+  $('#tpl2026')?.addEventListener('click', () => initPlantilla(true));
+  $('#tplvacia')?.addEventListener('click', () => initPlantilla(false));
+  $('#editIng').onclick = editIngresos;
+  $('#addLine').onclick = () => editLinea(null);
+  $('#addFijo').onclick = () => editRecurrente(null);
+  $('#cfgMes').onclick = cfgMes;
+  $('#doRep')?.addEventListener('click', hacerReparto);
+  $('#undo')?.addEventListener('click', deshacerReparto);
+  $('#addcat').onclick = () => editSobre(null, 'gasto');
+  $$('[data-line]').forEach((li) => { li.onclick = () => editLinea(li.dataset.line); });
+  $$('[data-fijo]').forEach((li) => { li.onclick = () => editRecurrente(li.dataset.fijo); });
+  bindRowItems();
+}
+const MESES_LARGOS_MES = (m) => mesLargo(m).split(' ')[0];
+
+async function initPlantilla(desde2026) {
+  const L = S.libro;
+  try {
+    if (desde2026) {
+      const rows = PLANTILLA_2026.filter(([c]) => L.byCode[c]).map(([hacia, importe], i) => ({ id: uid(), orden: i + 1, hacia, importe, activo: 1, borrado: '' }));
+      await S.store.add('Reparto', rows);
+      if (!L.config.ingreso_previsto) await setConfig('ingreso_previsto', '2000');
+    }
+    if (!L.config.cuenta_principal && L.principal) await setConfig('cuenta_principal', L.principal);
+    if (!L.config.cuenta_fondo && L.fondo) await setConfig('cuenta_fondo', L.fondo);
+    // el traspaso al fondo ya va en el reparto: la automatización equivalente sobra
+    const dup = (L.db.Recurrentes || []).filter((r) => r.clase === 'traspaso' && String(r.debe) === L.fondo && !truthy(r.activo));
+    if (dup.length) await S.store.update('Recurrentes', dup.map((r) => ({ ...r, nombre: `${r.nombre} (borrada)` })));
+    await reload(); toast(desde2026 ? 'Plantilla creada: cámbiala cuando quieras' : 'Añade tus líneas con «+ Añadir línea»'); render();
+  } catch (e) { fail(e); }
+}
+
+// copia la plantilla al mes para poder cambiarlo sin tocar la plantilla
+async function ensureSnapshot(m) {
+  const L = S.libro; const P = L.planMes(m);
+  if (P.hasSnap) return;
+  const rows = P.lines.map((l) => ({ id: uid(), mes: m, linea: l.linea, hacia: l.code, importe: l.plan, borrado: '' }));
+  rows.push({ id: uid(), mes: m, linea: 'ingresos', hacia: '', importe: P.ingresosPlan, borrado: '' });
+  await S.store.add('RepartoMes', rows); await reload();
+}
+const snapRow = (m, linea) => (S.libro.db.RepartoMes || []).find((x) => x.mes === m && String(x.linea) === String(linea));
+
+function scopeField(m, allowTpl = true) {
+  const past = m < ym(todayISO());
+  return allowTpl && !past ? { key: 'ambito', label: '¿Para cuándo?', type: 'select', options: [['mes', `Solo ${mesLargo(m)}`], ['tpl', `${mesLargo(m)} y los meses siguientes`]] } : null;
+}
+
+function editLinea(linea) {
+  const L = S.libro; const m = S.mes; const P = L.planMes(m);
+  const l = linea ? P.lines.find((x) => x.linea === String(linea)) : null;
+  const fields = [
+    { key: 'hacia', label: 'Cuenta', type: 'account', filter: (c) => kindOf(c) === 'dinero' && c.codigo !== L.principal, createKind: 'dinero', required: true },
+    { key: 'importe', label: 'Importe al mes €', type: 'number', required: true },
+  ];
+  const sc = scopeField(m); if (sc) fields.push(sc);
+  const extra = l?.done ? `<div class="banner" style="margin-bottom:10px">Este traspaso ya está hecho (${eur(l.real)}). Si cambias el importe, se corrige también el movimiento.</div>` : '';
+  formModal({
+    title: l ? l.nombre : 'Nueva línea de reparto', fields, extra,
+    values: l ? { hacia: l.code, importe: l.plan, ambito: 'tpl' } : { ambito: 'tpl' },
+    onSave: async (d) => {
+      const tpl = d.ambito === 'tpl' && sc;
+      if (!l) { // nueva
+        if (tpl) {
+          const row = { id: uid(), orden: (L.db.Reparto || []).length + 1, hacia: d.hacia, importe: d.importe, activo: 1, borrado: '' };
+          await S.store.add('Reparto', [row]);
+          if (P.hasSnap) await S.store.add('RepartoMes', [{ id: uid(), mes: m, linea: row.id, hacia: d.hacia, importe: d.importe, borrado: '' }]);
+        } else { await ensureSnapshot(m); await S.store.add('RepartoMes', [{ id: uid(), mes: m, linea: uid(), hacia: d.hacia, importe: d.importe, borrado: '' }]); }
+        await reload(); return;
+      }
+      if (tpl && l.tpl) await S.store.update('Reparto', [{ ...l.tpl, hacia: d.hacia, importe: d.importe }]);
+      if (!tpl || P.hasSnap) { await ensureSnapshot(m); const sr = snapRow(m, l.linea); if (sr) await S.store.update('RepartoMes', [{ ...sr, hacia: d.hacia, importe: d.importe }]); }
+      if (l.done) await S.store.update('Diario', [{ ...l.done, debe: d.hacia, importe: round2(d.importe) }]);
+      await reload();
+    },
+    onDelete: l ? async () => {
+      const tpl = sc && confirm(`¿Quitarla también de los meses siguientes?\n\nAceptar: sí, de la plantilla.\nCancelar: solo de ${mesLargo(m)}.`);
+      if (tpl && l.tpl) await S.store.update('Reparto', [{ ...l.tpl, borrado: 1 }]);
+      if (!tpl || P.hasSnap) { await ensureSnapshot(m); const sr = snapRow(m, l.linea); if (sr) await S.store.update('RepartoMes', [{ ...sr, borrado: 1 }]); }
+      if (l.done) await S.store.update('Diario', [{ ...l.done, borrado: 1 }]);
+      await reload();
+    } : null,
+  });
+}
+
+function editIngresos() {
+  const L = S.libro; const m = S.mes; const P = L.planMes(m);
+  const fields = [{ key: 'importe', label: 'Ingresos previstos €', type: 'number', required: true, hint: 'Nómina más lo que esperes cobrar este mes.' }];
+  const sc = scopeField(m); if (sc) fields.push(sc);
+  formModal({
+    title: `Ingresos de ${mesLargo(m)}`, fields, values: { importe: P.ingresosPlan, ambito: 'mes' },
+    onSave: async (d) => {
+      if (d.ambito === 'tpl' && sc) { await setConfig('ingreso_previsto', String(d.importe)); if (P.hasSnap) { const sr = snapRow(m, 'ingresos'); if (sr) await S.store.update('RepartoMes', [{ ...sr, importe: d.importe }]); } }
+      else { await ensureSnapshot(m); const sr = snapRow(m, 'ingresos'); if (sr) await S.store.update('RepartoMes', [{ ...sr, importe: d.importe }]); }
+      await reload();
+    },
+  });
+}
+
+function cfgMes() {
+  const L = S.libro;
+  formModal({
+    title: 'Cuentas del reparto',
+    fields: [
+      { key: 'principal', label: 'Cuenta principal (donde cobras y se queda lo que sobra)', type: 'account', filter: (c) => kindOf(c) === 'dinero', createKind: 'dinero', required: true },
+      { key: 'fondo', label: 'Fondo de imprevistos', type: 'account', filter: (c) => kindOf(c) === 'dinero', createKind: 'dinero' },
+    ],
+    values: { principal: L.principal, fondo: L.fondo },
+    onSave: async (d) => { await setConfig('cuenta_principal', d.principal); if (d.fondo) await setConfig('cuenta_fondo', d.fondo); await reload(); },
+  });
+}
+
+async function hacerReparto() {
+  const L = S.libro; const m = S.mes; const P = L.planMes(m);
+  if (!L.principal) { cfgMes(); return; }
+  const fecha = m === ym(todayISO()) ? todayISO() : `${m}-01`;
+  const rows = P.pendientes.map((l) => newEntry({ fecha, concepto: `Reparto ${MESES_LARGOS_MES(m)}: ${l.nombre}`, debe: l.code, haber: L.principal, importe: l.plan, clase: 'traspaso', origen: `rep:${m}:${l.linea}` }));
+  if (!confirm(`Se apuntarán ${rows.length} traspasos desde ${L.nombre(L.principal)} por ${eur(rows.reduce((s, r) => s + r.importe, 0))}. ¿Seguir?`)) return;
+  const btn = $('#doRep'); if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span>'; }
+  try { await ensureSnapshot(m); await S.store.add('Diario', rows); await reload(); toast('Reparto hecho'); render(); } catch (e) { fail(e); render(); }
+}
+async function deshacerReparto() {
+  const L = S.libro; const m = S.mes;
+  const rows = L.activeRows.filter((r) => String(r.origen).startsWith(`rep:${m}:`));
+  if (!confirm(`Se borrarán los ${rows.length} traspasos del reparto de ${mesLargo(m)}. El plan se mantiene. ¿Seguir?`)) return;
+  try { await S.store.update('Diario', rows.map((r) => ({ ...r, borrado: 1 }))); await reload(); toast('Reparto deshecho'); render(); } catch (e) { fail(e); }
+}
+
 // ---------------- DIARIO ----------------
 function viewDiario() {
   const L = S.libro; const st = S.diario;
@@ -530,11 +717,12 @@ function viewDiario() {
 }
 
 // ---------------- INFORMES ----------------
-const INFORMES = [['pyg', 'Ingresos y gastos'], ['balance', 'Patrimonio'], ['graficos', 'Gráficos'], ['sobres', 'Presupuesto'], ['cuadre', 'Comprobar bancos']];
+const INFORMES = [['pyg', 'Ingresos y gastos'], ['balance', 'Patrimonio'], ['graficos', 'Gráficos'], ['cuadre', 'Comprobar bancos']];
 function viewInformes() {
   view().innerHTML = `<div class="seg">${INFORMES.map(([k, l]) => `<button data-i="${k}" class="${S.informe === k ? 'on' : ''}">${l}</button>`).join('')}</div><div id="inf" style="margin-top:14px"></div>`;
   $$('.seg button[data-i]').forEach((b) => { b.onclick = () => { S.informe = b.dataset.i; viewInformes(); }; });
-  ({ pyg: infPyG, balance: infBalance, graficos: infGraficos, sobres: infSobres, cuadre: infCuadre })[S.informe]();
+  if (!INFORMES.some(([k]) => k === S.informe)) S.informe = 'pyg';
+  ({ pyg: infPyG, balance: infBalance, graficos: infGraficos, cuadre: infCuadre })[S.informe]();
 }
 
 // selector de periodo común: Mes / Año
@@ -580,11 +768,13 @@ function infPyG() {
   const head = `<tr><th></th>${cols.map((c, i) => `<th>${esc(c.label)}</th>${i === diffAt ? '<th>Dif.</th>' : ''}`).join('')}</tr>`;
   const cellsOf = (values, render = cell, gasto = true) => values.map((v, i) => `${render(v)}${i === diffAt ? cellDiff(values[0] - values[1], gasto) : ''}`).join('');
   const line = (r, gasto) => `<tr class="tap" data-acc="${esc(r.code)}"><td>${esc(r.nombre)}</td>${cellsOf(r.values, cell, gasto)}</tr>`;
-  const groups = {}; p.gastos.forEach((r) => (groups[r.grupo || 'Otros'] ??= []).push(r));
+  const BLOQUES = [['fijos', 'Gastos fijos'], ['variables', 'Gastos variables'], ['imprevistos', 'Imprevistos'], ['financieros', 'Hipoteca, amortizaciones y otros']];
+  const blockTotals = {};
   let gastosHtml = '';
-  for (const [g, list] of Object.entries(groups)) {
-    gastosHtml += list.map((r) => line(r, true)).join('');
-    if (list.length > 1 && Object.keys(groups).length > 1) gastosHtml += `<tr class="sub dim"><td>Total ${esc(g.toLowerCase())}</td>${cellsOf(cols.map((_, i) => list.reduce((s, r) => s + r.values[i], 0)))}</tr>`;
+  for (const [k, label] of BLOQUES) {
+    const list = p.gastos.filter((r) => r.bloque === k); if (!list.length) continue;
+    const tot = cols.map((_, i) => list.reduce((s2, r) => s2 + r.values[i], 0)); blockTotals[k] = tot;
+    gastosHtml += `<tr class="sec2"><td>${label}</td>${cellsOf(tot)}</tr>${list.map((r) => line(r, true)).join('')}`;
   }
   const empty = `<tr><td class="muted" colspan="${n + 1}">Nada en este periodo</td></tr>`;
   $('#inf').innerHTML = `${periodBar(infPyG)}
@@ -596,12 +786,24 @@ function infPyG() {
       <tr class="sec"><td colspan="${n + 1}">Gastos</td></tr>
       ${gastosHtml || empty}
       <tr class="sub"><td>Total gastos</td>${cellsOf(p.totalGastos)}</tr>
-      <tr class="dim"><td>· de ellos imprevistos</td>${cellsOf(p.imprevistos)}</tr>
       <tr class="tot"><td>Ahorro (resultado)</td>${cellsOf(p.resultado, cellNeg, false)}</tr>
       <tr class="dim"><td>Ahorro sin imprevistos</td>${cellsOf(p.resultado.map((v, i) => v + p.imprevistos[i]), cellNeg, false)}</tr>
     </table></div>
     <p class="small muted">Toca una línea para ver sus movimientos. Los traspasos entre tus cuentas y las compras de bienes (piso, coche…) no aparecen aquí porque no son ni ingreso ni gasto.</p>`;
   goAccount($('#inf'));
+}
+
+function dondeAhorroHtml(m) {
+  const L = S.libro; const list = L.dondeAhorro(m);
+  const ahorro = L.pygCols([{ from: m, to: m }]).resultado[0];
+  const total = round2(list.reduce((s2, x) => s2 + x.aporta, 0));
+  if (!list.length) return '';
+  const KL = { dinero: 'en bancos e inversiones', bien: 'en bienes', deuda: 'pagando deudas' };
+  const desc = (x) => (x.kind === 'deuda' ? (x.aporta >= 0 ? 'deuda pagada' : 'deuda nueva') : x.kind === 'bien' ? (x.aporta >= 0 ? 'bien comprado' : 'pierde valor (amortización)') : x.aporta >= 0 ? 'ha crecido' : 'ha bajado');
+  return `<div class="card" style="margin-bottom:12px"><div class="row between"><h3 style="margin:0">Dónde ha ido tu ahorro</h3><strong class="${cls(ahorro)}">${eur(ahorro, 0)}</strong></div>
+    <p class="small muted" style="margin:4px 0 6px">Tu ahorro del mes (ingresos − gastos) es exactamente lo que han cambiado tus cuentas.</p>
+    <ul class="list">${list.map((x) => `<li class="tap" data-acc="${esc(x.code)}"><span class="pk-ic">${emojiFor(L.byCode[x.code])}</span><div class="grow"><div class="t">${esc(x.nombre)}</div><div class="s">${desc(x)}</div></div><div class="amount ${cls(x.aporta)}">${x.aporta > 0 ? '+' : ''}${eur(x.aporta)}</div></li>`).join('')}</ul>
+    ${Math.abs(total - ahorro) > 0.5 ? `<p class="small neg">No cuadra por ${eur(total - ahorro)}: revisa asientos de apertura o ajustes de este mes.</p>` : `<p class="small muted" style="margin-bottom:0">${Object.entries(list.reduce((a2, x) => { a2[x.kind] = (a2[x.kind] || 0) + x.aporta; return a2; }, {})).map(([k, v]) => `${eur(v, 0)} ${KL[k] || ''}`).join(' · ')}</p>`}</div>`;
 }
 
 function needsApertura() {
@@ -633,6 +835,7 @@ function infBalance() {
   $('#inf').innerHTML = `${top}
     <div class="kpis" style="margin-bottom:12px"><div class="kpi"><div class="lbl">Patrimonio neto · fin de ${esc(MESES[Number(target.month.slice(5)) - 1].toLowerCase())}</div><div class="val">${eur(target.patrimonioNeto, 0)}</div><div class="sub">${withDiff ? `${target.patrimonioNeto - bals[0].patrimonioNeto >= 0 ? '+' : ''}${eur(target.patrimonioNeto - bals[0].patrimonioNeto, 0)} en el mes` : 'lo que tienes − lo que debes'}</div></div>
     <div class="kpi"><div class="lbl">Lo que tienes</div><div class="val">${eur(target.totalActivo, 0)}</div></div><div class="kpi"><div class="lbl">Lo que debes</div><div class="val">${eur(target.totalPasivo, 0)}</div></div></div>
+    ${isMes && !(L.inicio && ym(L.inicio) === S.mes) ? dondeAhorroHtml(S.mes) : ''}
     <div class="tablewrap"><table class="rep">${head}
       ${section('activo', 'Lo que tienes (activo)')}
       ${row('Total activo', bals.map((b) => b.totalActivo), 'sub')}

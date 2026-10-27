@@ -3,6 +3,7 @@
 Webapp de contabilidad personal de **doble partida** (inspirada en el Plan General Contable) que guarda los datos en una **hoja de Google Sheets privada** del usuario. Funciona en el móvil y se puede instalar como app.
 
 - **Apuntar** con plantillas: gasto, ingreso, traspaso, compra de activo o asiento libre. Cada movimiento es un asiento debe/haber.
+- **Mes**: plan de caja al estilo hoja de Excel: ingresos previstos, gastos fijos, reparto a cuentas (plantilla editable, por mes o para siempre), lo que se queda en la cuenta principal y botón para hacer o deshacer el reparto.
 - **Informes**: PyG mensual, balance mes a mes (con comprobación de cuadre), gráficos, sobres de presupuesto y cuadre con el saldo real de los bancos.
 - **Automatizaciones**: gastos recurrentes, amortización de activos y cuotas de hipoteca (separa intereses 662 y capital 170). Se generan solas al abrir la app.
 - **Datos**: todo vive en tu Google Drive. La app solo pide el permiso `drive.file`, así que solo ve la hoja que ella misma crea.
@@ -46,7 +47,9 @@ El ID de cliente es público por diseño: sin iniciar sesión con tu cuenta de G
 | Recurrentes | Movimientos que se repiten cada mes |
 | Activos | Bienes que se amortizan (valor, vida útil en meses, residual) |
 | Prestamos | Hipoteca y préstamos (sistema francés) |
-| Presupuesto | Sobres: `mes` = `AAAA-MM` o `*` para todos los meses |
+| Presupuesto | Límites por categoría: `mes` = `AAAA-MM` o `*` para todos los meses |
+| Reparto | Plantilla de reparto mensual (cuenta destino e importe) |
+| RepartoMes | Copia del reparto de un mes concreto cuando se cambia o se ejecuta |
 | Saldos | Saldos reales anotados al cuadrar bancos |
 | Config | Ajustes internos |
 
