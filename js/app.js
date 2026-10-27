@@ -5,7 +5,7 @@ import {
 } from './model.js';
 
 // ---------------- estado y utilidades de UI ----------------
-const S = { store: null, libro: null, loading: false, mes: ym(todayISO()), year: Number(todayISO().slice(0, 4)), informe: 'pyg', periodo: 'mes', apuntar: 'gasto', diario: { q: '', mes: '', cuenta: '', n: 80 } };
+const S = { store: null, libro: null, loading: false, mes: ym(todayISO()), year: Number(todayISO().slice(0, 4)), informe: 'libro', periodo: 'mes', apuntar: 'gasto', diario: { q: '', mes: '', cuenta: '', n: 80 } };
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -320,7 +320,7 @@ function render() {
   if (!S.libro) return;
   const r = (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'inicio';
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.r === r));
-  $('#title').textContent = { inicio: 'Financito', mes: 'Mes', apuntar: 'Apuntar', diario: 'Diario', informes: 'Informes', ajustes: 'Ajustes' }[r] || 'Financito';
+  $('#title').textContent = { inicio: 'Financito', mes: 'Mes', apuntar: 'Apuntar', diario: 'Movimientos', informes: 'Informes', ajustes: 'Ajustes' }[r] || 'Financito';
   $('#topbar-actions').innerHTML = `${S.store.kind === 'demo' ? '<span class="chip">demo</span>' : ''}<a href="#/ajustes" class="iconbtn ${r === 'ajustes' ? 'on' : ''}" aria-label="Ajustes">⚙</a>`;
   (ROUTES[r] || viewInicio)();
   view().focus({ preventScroll: true });
@@ -553,8 +553,13 @@ function viewMes() {
       <button class="btn sm" id="addLine" style="margin-top:8px">+ Añadir cuenta al reparto</button></div>
 
     <div class="card">
-      <div class="row between"><div><h3 style="margin:0">Se queda en ${esc(nPrin)}</h3><div class="small muted">ingresos − fijos − reparto</div></div><button class="iconbtn" id="cfgMes" aria-label="Cambiar cuenta principal">⚙</button></div>
-      <div class="two" style="margin-top:8px"><div><div class="small muted">Previsto</div><div class="kpiv ${cls(P.sobrantePlan)}">${eur(P.sobrantePlan, 0)}</div></div><div><div class="small muted">Con lo real</div><div class="kpiv ${cls(P.sobranteReal)}">${eur(P.sobranteReal, 0)}</div></div></div>
+      <div class="row between"><div><h3 style="margin:0">Se queda en ${esc(nPrin)}</h3><div class="small muted">lo que sobra tras fijos y reparto</div></div><button class="iconbtn" id="cfgMes" aria-label="Cambiar cuenta principal">⚙</button></div>
+      <div class="two" style="margin-top:8px">
+        <div><div class="small muted">Previsto</div><div class="kpiv ${cls(P.sobrantePlan)}">${eur(P.sobrantePlan, 0)}</div>
+          <div class="calc">${eur(P.ingresosPlan, 0)} ingresos previstos<br>− ${eur(P.fijosPlan, 0)} fijos previstos<br>− ${eur(P.repartoPlan, 0)} reparto previsto</div></div>
+        <div><div class="small muted">Con lo real</div><div class="kpiv ${cls(P.sobranteReal)}">${eur(P.sobranteReal, 0)}</div>
+          <div class="calc">${eur(P.ingresosReal, 0)} ingresos entrados<br>− ${eur(P.fijosReal, 0)} fijos ya apuntados<br>− ${eur(P.repartoReal, 0)} traspasos ya hechos</div></div></div>
+      ${P.sobrantePlan < 0 ? `<p class="small neg" style="margin:8px 0 0">Tu plan reparte ${eur(-P.sobrantePlan, 0)} más de lo que esperas cobrar.</p>` : ''}
       ${L.inicio && principal ? `<div class="small muted" style="margin-top:6px">Saldo actual de ${esc(nPrin)}: <strong>${eur(L.balanceToDate(principal))}</strong></div>` : ''}
     </div>
 
@@ -702,12 +707,116 @@ function viewDiario() {
 }
 
 // ---------------- INFORMES ----------------
-const INFORMES = [['pyg', 'Ingresos y gastos'], ['balance', 'Patrimonio'], ['graficos', 'Gráficos'], ['cuadre', 'Comprobar bancos']];
+const INFORMES = [['libro', 'Libro diario'], ['mayor', 'Libro mayor'], ['pyg', 'PyG'], ['balance', 'Balance'], ['graficos', 'Gráficos'], ['cuadre', 'Bancos']];
+const INF_HELP = {
+  libro: ['Libro diario', 'Todos los asientos en orden de fecha. Cada uno dice qué cuenta recibe (debe) y cuál entrega (haber). Debe y haber siempre suman lo mismo.'],
+  mayor: ['Libro mayor', 'Los mismos asientos, pero ordenados por cuenta: cada cuenta es una «T» con sus entradas, salidas y saldo.'],
+  pyg: ['PyG · ¿cuánto ahorro?', 'Solo cuentas de gasto (6) e ingreso (7). Ingresos − gastos = ahorro. Los traspasos y el reparto no aparecen: solo mueven dinero entre tus cuentas.'],
+  balance: ['Balance · ¿cuánto tengo?', 'Lo que tienes (bancos, inversiones, bienes) y lo que debes, a final de mes. Sube cada mes lo que ahorras.'],
+  graficos: ['Gráficos', 'Tus gastos e ingresos, en dibujo.'],
+  cuadre: ['Comprobar bancos', 'Compara lo que dice Financito con lo que dice tu banco.'],
+};
 function viewInformes() {
-  view().innerHTML = `<div class="seg">${INFORMES.map(([k, l]) => `<button data-i="${k}" class="${S.informe === k ? 'on' : ''}">${l}</button>`).join('')}</div><div id="inf" style="margin-top:14px"></div>`;
+  if (!INFORMES.some(([k]) => k === S.informe)) S.informe = 'libro';
+  const [t, d] = INF_HELP[S.informe];
+  view().innerHTML = `<div class="seg">${INFORMES.map(([k, l]) => `<button data-i="${k}" class="${S.informe === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <details class="infohelp"><summary><strong>${esc(t)}</strong> · <span class="muted">${esc(d.split('.')[0])}.</span></summary><p class="small">${esc(d)}</p>
+      <div class="flowmap small"><span>Apuntar</span>→<span>Libro diario</span>→<span>Libro mayor</span>→<span>PyG (6 y 7)</span>+<span>Balance (1 a 5)</span></div>
+      <p class="small muted">La pestaña <strong>Mes</strong> es la de caja: el reparto solo pasa dinero de ${esc(S.libro.principal ? S.libro.nombre(S.libro.principal) : 'tu cuenta principal')} a otras cuentas (traspasos), así que cambia el balance de cada cuenta pero no la PyG.</p></details>
+    <div id="inf" style="margin-top:12px"></div>`;
   $$('.seg button[data-i]').forEach((b) => { b.onclick = () => { S.informe = b.dataset.i; viewInformes(); }; });
-  if (!INFORMES.some(([k]) => k === S.informe)) S.informe = 'pyg';
-  ({ pyg: infPyG, balance: infBalance, graficos: infGraficos, cuadre: infCuadre })[S.informe]();
+  ({ libro: infLibro, mayor: infMayor, pyg: infPyG, balance: infBalance, graficos: infGraficos, cuadre: infCuadre })[S.informe]();
+}
+
+// rango del periodo elegido
+const periodRange = () => (S.periodo === 'año' ? [`${S.year}-01-01`, `${S.year}-12-31`] : [`${S.mes}-01`, `${S.mes}-31`]);
+const shortDate = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+// número de asiento: orden cronológico dentro del año
+function asientos(L) {
+  const groups = new Map();
+  for (const r of [...L.activeRows].sort((a, b) => (a.fecha + (a.creado || '')).localeCompare(b.fecha + (b.creado || '')))) {
+    const k = r.asiento || r.id; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r);
+  }
+  const list = [...groups.values()].map((rows) => ({ rows, fecha: rows[0].fecha, concepto: rows.length > 1 ? rows[0].concepto.replace(/ · (intereses|capital).*/, '') : rows[0].concepto, clase: rows[0].clase, total: round2(rows.reduce((s, r) => s + r.importe, 0)) }));
+  const byYear = {}; list.forEach((a) => { const y = a.fecha.slice(0, 4); byYear[y] = (byYear[y] || 0) + 1; a.n = byYear[y]; });
+  return list;
+}
+
+function infLibro() {
+  const L = S.libro; const [from, to] = periodRange();
+  const all = asientos(L).filter((a) => a.fecha >= from && a.fecha <= to).reverse();
+  S.libroN ??= 40; const shown = all.slice(0, S.libroN);
+  const sideRows = (rows, side) => {
+    const acc = {}; rows.forEach((r) => { const c = side === 'd' ? r.debe : r.haber; acc[c] = (acc[c] || 0) + r.importe; });
+    return Object.entries(acc).map(([c, v]) => `<div class="as-line"><span class="as-acc"><span class="as-code">${esc(c)}</span> ${esc(L.nombre(c))}</span><span class="as-amt">${fmt(v)}</span></div>`).join('');
+  };
+  $('#inf').innerHTML = `${periodBar(infLibro)}
+    <div class="small muted" style="margin:-4px 2px 8px">${all.length} asientos · ${eur(all.reduce((s, a) => s + a.total, 0), 0)} movidos</div>
+    ${shown.map((a) => `<div class="asiento tap" data-id="${esc(a.rows[0].id)}">
+      <div class="as-head"><span class="as-n">Nº ${a.n}</span><span class="as-date">${esc(shortDate(a.fecha))}</span><span class="as-concept">${esc(a.concepto || '(sin concepto)')}</span>${a.clase && a.clase !== 'corriente' ? `<span class="chip ${esc(a.clase)}">${esc(CLASES[a.clase] || a.clase)}</span>` : ''}</div>
+      <div class="as-body"><div class="as-col debe"><div class="as-lbl">Debe · recibe</div>${sideRows(a.rows, 'd')}</div><div class="as-col haber"><div class="as-lbl">Haber · entrega</div>${sideRows(a.rows, 'h')}</div></div>
+    </div>`).join('') || '<div class="empty">Sin asientos en este periodo.</div>'}
+    ${all.length > shown.length ? '<button class="btn block" id="more">Ver más</button>' : ''}`;
+  $$('.asiento[data-id]').forEach((el) => { el.onclick = () => editEntry(el.dataset.id); });
+  $('#more')?.addEventListener('click', () => { S.libroN += 60; infLibro(); });
+}
+
+function infMayor() {
+  const L = S.libro; const [from, to] = periodRange();
+  if (S.mayorCuenta) return mayorCuenta(S.mayorCuenta);
+  // balance de sumas y saldos del periodo
+  const sums = {};
+  for (const r of L.activeRows) {
+    if (r.fecha < from || r.fecha > to) continue;
+    (sums[r.debe] ??= { d: 0, h: 0 }).d += r.importe; (sums[r.haber] ??= { d: 0, h: 0 }).h += r.importe;
+  }
+  const codes = Object.keys(sums).sort((a, b) => a.localeCompare(b));
+  const GRP = { 1: 'Financiación y patrimonio', 2: 'Bienes (inmovilizado)', 4: 'Deudores y acreedores', 5: 'Bancos e inversiones', 6: 'Gastos', 7: 'Ingresos' };
+  let html = ''; let cur = ''; let td = 0; let th = 0;
+  for (const c of codes) {
+    const g = c[0]; if (g !== cur) { cur = g; html += `<tr class="sec"><td colspan="4">${esc(g)} · ${esc(GRP[g] || 'Otras')}</td></tr>`; }
+    const { d, h } = sums[c]; td += d; th += h; const sal = L.debitNormal(c) ? d - h : h - d;
+    html += `<tr class="tap" data-acc="${esc(c)}"><td><span class="as-code">${esc(c)}</span> ${esc(L.nombre(c))}</td><td class="n">${fmt(d, 0)}</td><td class="n">${fmt(h, 0)}</td><td class="n ${cls(sal)}">${fmt(sal, 0)}</td></tr>`;
+  }
+  $('#inf').innerHTML = `${periodBar(infMayor)}
+    <div class="field">${pickerField('cuenta', 'Ver el mayor de una cuenta', () => true, '', { placeholder: 'Elegir cuenta…' })}</div>
+    <h3>Sumas y saldos del periodo</h3>
+    <div class="tablewrap"><table class="rep"><tr><th>Cuenta</th><th>Debe</th><th>Haber</th><th>Movimiento</th></tr>${html || '<tr><td colspan="4" class="muted">Sin movimientos</td></tr>'}
+      <tr class="tot"><td>Total</td><td class="n">${fmt(td, 0)}</td><td class="n">${fmt(th, 0)}</td><td class="n">${Math.abs(td - th) < 0.01 ? '✓' : `<span class="neg">${fmt(td - th)}</span>`}</td></tr></table></div>
+    <p class="small muted">En doble partida el total del debe siempre es igual al del haber. Toca una cuenta para ver su mayor.</p>`;
+  bindPickers($('#inf'));
+  $('#inf input[name=cuenta]').addEventListener('change', (e) => { S.mayorCuenta = e.target.value; infMayor(); });
+  $$('#inf tr[data-acc]').forEach((tr) => { tr.onclick = () => { S.mayorCuenta = tr.dataset.acc; infMayor(); }; });
+}
+
+function mayorCuenta(code) {
+  const L = S.libro; const [from, to] = periodRange(); const dn = L.debitNormal(code);
+  const sign = (r) => (r.debe === code ? 1 : -1) * (dn ? 1 : -1) * r.importe;
+  const rowsAll = L.activeRows.filter((r) => r.debe === code || r.haber === code).sort((a, b) => (a.fecha + (a.creado || '')).localeCompare(b.fecha + (b.creado || '')));
+  const ini = round2(rowsAll.filter((r) => r.fecha < from).reduce((s, r) => s + sign(r), 0));
+  const rows = rowsAll.filter((r) => r.fecha >= from && r.fecha <= to);
+  let saldo = ini; const d = rows.filter((r) => r.debe === code); const h = rows.filter((r) => r.haber === code);
+  const sd = round2(d.reduce((s, r) => s + r.importe, 0)); const sh = round2(h.reduce((s, r) => s + r.importe, 0));
+  const fin = round2(ini + (dn ? sd - sh : sh - sd));
+  const tLine = (r, side) => `<div class="t-line tap" data-id="${esc(r.id)}"><span class="t-date">${esc(shortDate(r.fecha))}</span><span class="t-desc">${esc(r.concepto || '')}<small>${esc(L.nombre(side === 'd' ? r.haber : r.debe))}</small></span><span class="t-amt">${fmt(r.importe)}</span></div>`;
+  const c = L.byCode[code];
+  $('#inf').innerHTML = `${periodBar(() => mayorCuenta(code))}
+    <div class="row between" style="margin-bottom:8px"><button class="btn sm" id="back">‹ Todas las cuentas</button><span class="chip">${esc(c ? KIND_LABEL[kindOf(c)] : L.tipo(code))}</span></div>
+    <div class="taccount">
+      <div class="t-title"><span class="pk-ic">${emojiFor(c)}</span><div><div class="t-name">${esc(L.nombre(code))}</div><div class="small muted">Cuenta ${esc(code)} · saldo inicial ${eur(ini)}</div></div></div>
+      <div class="t-cols">
+        <div class="t-col"><div class="t-h">Debe <small>${dn ? 'suma' : 'resta'}</small></div>${d.map((r) => tLine(r, 'd')).join('') || '<div class="t-empty">—</div>'}<div class="t-sum">${fmt(sd)}</div></div>
+        <div class="t-col"><div class="t-h">Haber <small>${dn ? 'resta' : 'suma'}</small></div>${h.map((r) => tLine(r, 'h')).join('') || '<div class="t-empty">—</div>'}<div class="t-sum">${fmt(sh)}</div></div>
+      </div>
+      <div class="t-saldo">Saldo final <strong class="${cls(fin)}">${eur(fin)}</strong></div>
+    </div>
+    <h3>Movimiento a movimiento</h3>
+    <div class="tablewrap"><table class="rep"><tr><th>Fecha</th><th>Concepto · contrapartida</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr>
+      <tr class="dim"><td>${esc(shortDate(from))}</td><td>Saldo inicial</td><td></td><td></td><td class="n">${fmt(ini)}</td></tr>
+      ${rows.map((r) => { saldo = round2(saldo + sign(r)); return `<tr class="tap" data-id="${esc(r.id)}"><td>${esc(shortDate(r.fecha))}</td><td>${esc(r.concepto || '')} <span class="muted">· ${esc(L.nombre(r.debe === code ? r.haber : r.debe))}</span></td><td class="n">${r.debe === code ? fmt(r.importe) : ''}</td><td class="n">${r.haber === code ? fmt(r.importe) : ''}</td><td class="n">${fmt(saldo)}</td></tr>`; }).join('')}
+    </table></div>`;
+  $('#back').onclick = () => { S.mayorCuenta = ''; infMayor(); };
+  $$('#inf [data-id]').forEach((el) => { el.onclick = () => editEntry(el.dataset.id); });
 }
 
 // selector de periodo común: Mes / Año

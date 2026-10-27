@@ -229,3 +229,45 @@ details.card summary { cursor: pointer; font-weight: 600; }
 .card + details.card, .card + .banner, .banner + .card { margin-top: 12px; }
 table.rep tr.sec2 td { font-weight: 650; background: color-mix(in srgb, var(--surface-2) 55%, var(--surface)); }
 table.rep tr.sec2 + tr td:first-child, table.rep tr.sec2 ~ tr.tap td:first-child { padding-left: 18px; }
+
+/* ayuda de informes */
+.infohelp { margin-top: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.infohelp summary { cursor: pointer; font-size: 13.5px; }
+.flowmap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted); }
+.flowmap span { background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 3px 8px; font-weight: 600; }
+.calc { font-size: 11.5px; color: var(--muted); line-height: 1.5; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.bottomnav a span:last-child { white-space: nowrap; }
+
+/* libro diario */
+.asiento { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; overflow: hidden; cursor: pointer; }
+.as-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--surface-2); font-size: 13px; }
+.as-n { font-weight: 700; color: var(--accent); white-space: nowrap; }
+.as-date { color: var(--muted); white-space: nowrap; }
+.as-concept { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+.as-body { display: grid; grid-template-columns: 1fr 1fr; }
+.as-col { padding: 6px 10px 8px; min-width: 0; }
+.as-col.debe { border-right: 1px dashed var(--line); }
+.as-lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 2px; }
+.as-line { display: flex; justify-content: space-between; gap: 6px; font-size: 13px; padding: 2px 0; }
+.as-acc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.as-amt { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.as-col.debe .as-amt { color: var(--accent); }
+.as-code { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* libro mayor: cuenta en T */
+.taccount { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-bottom: 8px; }
+.t-title { display: flex; gap: 10px; align-items: center; padding-bottom: 10px; }
+.t-name { font-weight: 700; font-size: 17px; }
+.t-cols { display: grid; grid-template-columns: 1fr 1fr; border-top: 2px solid var(--text); }
+.t-col { min-width: 0; padding: 6px 8px; }
+.t-col:first-child { border-right: 2px solid var(--text); }
+.t-h { font-weight: 700; text-align: center; margin-bottom: 4px; }
+.t-h small { font-weight: 400; color: var(--muted); }
+.t-line { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; font-size: 12.5px; padding: 3px 0; border-bottom: 1px dotted var(--line); align-items: baseline; }
+.t-date { color: var(--muted); white-space: nowrap; }
+.t-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-desc small { display: block; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.t-amt { font-variant-numeric: tabular-nums; font-weight: 600; }
+.t-sum { text-align: right; font-weight: 700; border-top: 1px solid var(--text); margin-top: 4px; padding-top: 4px; font-variant-numeric: tabular-nums; }
+.t-empty { text-align: center; color: var(--muted); padding: 6px; }
+.t-saldo { text-align: right; padding-top: 10px; font-size: 15px; }
