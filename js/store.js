@@ -141,6 +141,14 @@ export class SheetsStore {
     await this.ensureTabs(meta.sheets.map((s) => s.properties.title));
     const ranges = Object.keys(TABLES).map((t) => `ranges=${encodeURIComponent(t)}`).join('&');
     const r = await this.api(`https://sheets.googleapis.com/v4/spreadsheets/${this.sheetId}/values:batchGet?${ranges}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`);
+    // columnas nuevas de versiones posteriores: se añaden al final de la cabecera
+    const fixes = [];
+    Object.keys(TABLES).forEach((t, i) => {
+      const vals = r.valueRanges[i].values || [];
+      const head = vals[0] || [];
+      if (head.length < TABLES[t].length && head.every((h, j) => h === TABLES[t][j])) { vals[0] = TABLES[t]; r.valueRanges[i].values = vals; fixes.push({ range: `${t}!A1`, values: [TABLES[t]] }); }
+    });
+    if (fixes.length) await this.api(`https://sheets.googleapis.com/v4/spreadsheets/${this.sheetId}/values:batchUpdate`, { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data: fixes }) });
     const db = {};
     Object.keys(TABLES).forEach((t, i) => { db[t] = fromRows(t, r.valueRanges[i].values); });
     return db;

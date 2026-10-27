@@ -5,7 +5,7 @@ export const TABLES = {
   Diario: ['id', 'asiento', 'fecha', 'concepto', 'debe', 'haber', 'importe', 'clase', 'origen', 'notas', 'creado', 'borrado'],
   Recurrentes: ['id', 'nombre', 'dia', 'debe', 'haber', 'importe', 'clase', 'desde', 'hasta', 'activo'],
   Activos: ['id', 'nombre', 'cuenta', 'fecha_alta', 'valor', 'vida_meses', 'residual', 'activo'],
-  Prestamos: ['id', 'nombre', 'capital', 'interes_anual', 'plazo_meses', 'primera_cuota', 'cuenta_banco', 'cuenta_pasivo', 'cuenta_interes', 'activo'],
+  Prestamos: ['id', 'nombre', 'capital', 'interes_anual', 'plazo_meses', 'primera_cuota', 'cuenta_banco', 'cuenta_pasivo', 'cuenta_interes', 'activo', 'participacion'],
   Presupuesto: ['id', 'mes', 'cuenta', 'importe', 'borrado'],
   Saldos: ['id', 'fecha', 'cuenta', 'saldo', 'notas'],
   Reparto: ['id', 'orden', 'hacia', 'importe', 'activo', 'borrado'],
@@ -227,22 +227,30 @@ export class Libro {
   get principal() { return String(this.config.cuenta_principal || (this.byCode['5721'] ? '5721' : '')); }
   get fondo() { return String(this.config.cuenta_fondo || (this.byCode['5726'] ? '5726' : '')); }
   repRow(m, linea) { return this.activeRows.find((r) => r.origen === `rep:${m}:${linea}`); }
+  // Plan de un mes: cada mes tiene sus propias líneas (pestaña RepartoMes). Una línea va a una cuenta tuya (reparto) o es una fuente de ingreso (cuenta 7xx).
   planMes(m) {
-    const snapAll = (this.db.RepartoMes || []).filter((x) => x.mes === m);
-    const hasSnap = snapAll.length > 0;
-    const tpl = (this.db.Reparto || []).filter((x) => !truthy(x.borrado) && truthy(x.activo === '' ? 1 : x.activo)).sort((a, b) => num(a.orden) - num(b.orden));
-    const src = hasSnap ? snapAll.filter((x) => !truthy(x.borrado) && x.linea !== 'ingresos') : tpl.map((t) => ({ linea: t.id, hacia: t.hacia, importe: t.importe, tpl: t }));
-    const lines = src.map((x) => {
-      const code = String(x.hacia); const c = this.byCode[code];
-      const done = this.repRow(m, x.linea);
+    const all = (this.db.RepartoMes || []).filter((x) => x.mes === m);
+    const rows = all.filter((x) => !truthy(x.borrado) && x.linea !== 'ingresos' && x.hacia !== '');
+    const hasPlan = all.some((x) => !truthy(x.borrado));
+    const lines = []; const ingresos = [];
+    for (const x of rows) {
+      const code = String(x.hacia); const c = this.byCode[code]; const plan = num(x.importe);
+      if (this.tipo(code) === 'ingreso') { ingresos.push({ ...x, linea: String(x.linea || x.id), code, nombre: this.nombre(code), plan, real: this.monthNet(code, m), row: x }); continue; }
+      const linea = String(x.linea || x.id);
+      const done = this.repRow(m, linea);
       const grupo = code === this.fondo ? 'fondo' : (c?.grupo === 'Inversiones' ? 'ahorro' : 'sobre');
       let gastado = 0;
       if (grupo === 'sobre') for (const r of this.activeRows) if (ym(r.fecha) === m && r.haber === code && this.tipo(r.debe) === 'gasto' && r.clase !== 'imprevisto') gastado += r.importe;
-      const plan = num(x.importe);
-      return { ...x, linea: String(x.linea), code, nombre: this.nombre(code), grupo, plan, real: done ? done.importe : 0, done, gastado: round2(gastado), snap: hasSnap ? x : null, tpl: x.tpl || tpl.find((t) => String(t.id) === String(x.linea)) || null };
-    });
-    const ingSnap = snapAll.find((x) => x.linea === 'ingresos' && !truthy(x.borrado));
-    const ingresosPlan = num(ingSnap ? ingSnap.importe : this.config.ingreso_previsto);
+      lines.push({ ...x, linea, code, nombre: this.nombre(code), grupo, plan, real: done ? done.importe : 0, done, gastado: round2(gastado), row: x });
+    }
+    // fuentes de ingreso que han entrado sin estar en el plan
+    const enPlan = new Set(ingresos.map((i) => i.code));
+    for (const c of this.allCodes()) {
+      if (this.tipo(c) !== 'ingreso' || enPlan.has(c)) continue;
+      const v = this.monthNet(c, m); if (Math.abs(v) > 0.004) ingresos.push({ code: c, nombre: this.nombre(c), plan: 0, real: v, extra: true });
+    }
+    const legacyIng = all.find((x) => x.linea === 'ingresos' && !truthy(x.borrado));
+    const ingresosPlan = ingresos.some((i) => !i.extra) ? round2(ingresos.reduce((s, i) => s + i.plan, 0)) : num(legacyIng?.importe ?? 0);
     const ingresosReal = this.ingresoMes(m);
     const fijos = (this.db.Recurrentes || []).filter((r) => r.nombre && !String(r.nombre).endsWith('(borrada)') && (r.clase || 'corriente') === 'corriente' && this.tipo(String(r.debe)) === 'gasto'
       && String(r.desde).slice(0, 7) <= m && (!r.hasta || String(r.hasta).slice(0, 7) >= m))
@@ -250,14 +258,32 @@ export class Libro {
         const real = this.activeRows.filter((x) => x.origen === `rec:${r.id}:${m}`).reduce((s, x) => s + x.importe, 0);
         return { id: r.id, nombre: r.nombre, code: String(r.debe), activo: truthy(r.activo), plan: truthy(r.activo) ? num(r.importe) : 0, real: round2(real), rec: r };
       });
+    // cuotas de préstamos (tu parte): salen del banco aunque solo los intereses sean gasto
+    for (const p of this.db.Prestamos || []) {
+      if (!p.nombre || !truthy(p.activo)) continue;
+      const f = participacion(p); const q = cuadroPrestamo(p).find((x) => ym(x.fecha) === m); if (!q) continue;
+      const real = this.activeRows.filter((x) => String(x.origen).startsWith(`pres:${p.id}:${q.n}:`)).reduce((s, x) => s + x.importe, 0);
+      fijos.push({ id: `pres:${p.id}`, prestamo: p, nombre: `${p.nombre}${f < 1 ? ` (tu parte, ${Math.round(f * 100)} %)` : ''}`, code: String(p.cuenta_pasivo || '170'), activo: true, plan: round2(q.cuota * f), real: round2(real), dia: Number(q.fecha.slice(8, 10)) });
+    }
     const sum = (l, k) => round2(l.reduce((s, x) => s + x[k], 0));
     const tot = { fijosPlan: sum(fijos, 'plan'), fijosReal: sum(fijos, 'real'), repartoPlan: sum(lines, 'plan'), repartoReal: sum(lines, 'real') };
+    const dupes = rows.length - new Set(rows.map((x) => String(x.hacia))).size;
     return {
-      m, hasSnap, lines, fijos, ingresosPlan, ingresosReal, ingSnap, ...tot,
+      m, hasPlan, hasSnap: hasPlan, lines, ingresos, fijos, ingresosPlan, ingresosReal, dupes, ...tot,
       pendientes: lines.filter((l) => !l.done && l.plan > 0),
       sobrantePlan: round2(ingresosPlan - tot.fijosPlan - tot.repartoPlan),
       sobranteReal: round2(ingresosReal - tot.fijosReal - tot.repartoReal),
     };
+  }
+
+  // de dónde copiar el plan para un mes sin plan: el último mes anterior con plan, o la plantilla antigua
+  fuentePlan(m) {
+    const meses = [...new Set((this.db.RepartoMes || []).filter((x) => !truthy(x.borrado) && x.mes < m).map((x) => x.mes))].sort();
+    const prev = meses[meses.length - 1];
+    if (prev) return { mes: prev, rows: this.planMes(prev) };
+    const tpl = (this.db.Reparto || []).filter((x) => !truthy(x.borrado) && x.hacia !== '');
+    if (tpl.length) return { mes: null, tpl: true, rows: { lines: tpl.map((t) => ({ code: String(t.hacia), plan: num(t.importe) })), ingresos: [], ingresosPlan: num(this.config.ingreso_previsto) } };
+    return null;
   }
 
   // dónde ha acabado el ahorro de un mes: variación de cada cuenta de balance
@@ -409,16 +435,20 @@ export class Libro {
 
     for (const p of this.db.Prestamos || []) {
       if (!truthy(p.activo)) continue;
+      const f = participacion(p); const parte = f < 1 ? ' (tu parte)' : '';
       for (const q of cuadroPrestamo(p)) {
         if (q.fecha > today) break;
         const asiento = uid();
-        if (q.intereses > 0) push({ asiento, fecha: q.fecha, concepto: `${p.nombre} · intereses cuota ${q.n}`, debe: String(p.cuenta_interes || '662'), haber: String(p.cuenta_banco), importe: q.intereses, clase: 'corriente', origen: `pres:${p.id}:${q.n}:i` });
-        push({ asiento, fecha: q.fecha, concepto: `${p.nombre} · capital cuota ${q.n}`, debe: String(p.cuenta_pasivo || '170'), haber: String(p.cuenta_banco), importe: q.capital, clase: 'traspaso', origen: `pres:${p.id}:${q.n}:c` });
+        if (q.intereses > 0) push({ asiento, fecha: q.fecha, concepto: `${p.nombre} · intereses cuota ${q.n}${parte}`, debe: String(p.cuenta_interes || '662'), haber: String(p.cuenta_banco), importe: round2(q.intereses * f), clase: 'corriente', origen: `pres:${p.id}:${q.n}:i` });
+        push({ asiento, fecha: q.fecha, concepto: `${p.nombre} · capital cuota ${q.n}${parte}`, debe: String(p.cuenta_pasivo || '170'), haber: String(p.cuenta_banco), importe: round2(q.capital * f), clase: 'traspaso', origen: `pres:${p.id}:${q.n}:c` });
       }
     }
     return out.sort((a, b) => a.fecha.localeCompare(b.fecha));
   }
 }
+
+// parte del préstamo que es tuya (hipoteca a medias = 0,5)
+export function participacion(p) { const v = num(p.participacion); return v > 0 && v < 100 ? v / 100 : 1; }
 
 export function cuadroPrestamo(p) {
   const C = num(p.capital); const n = Math.round(num(p.plazo_meses)); const r = num(p.interes_anual) / 100 / 12;

@@ -1,7 +1,7 @@
 import { CONFIG } from './config.js';
 import { auth, AuthError, SheetsStore, LocalStore } from './store.js';
 import {
-  Libro, TABLES, CLASES, uid, round2, num, truthy, todayISO, ym, addMonths, eur, fmt, MESES, mesLargo, normDate, cuadroPrestamo, pad, kindOf, KIND_LABEL, displayGroup, nextCode,
+  Libro, TABLES, CLASES, uid, round2, num, truthy, todayISO, ym, addMonths, eur, fmt, MESES, mesLargo, normDate, cuadroPrestamo, participacion, pad, kindOf, KIND_LABEL, displayGroup, nextCode,
 } from './model.js';
 
 // ---------------- estado y utilidades de UI ----------------
@@ -342,7 +342,7 @@ function viewInicio() {
     ${S.autoMsg ? `<div class="banner">⚙ ${esc(S.autoMsg)}</div>` : ''}
     ${S.store.kind === 'demo' ? '<div class="banner warn">Estás en modo demo: los datos son de ejemplo y solo se guardan en este navegador.</div>' : ''}
     <h1 style="text-transform:capitalize">${esc(mesLargo(mes))}</h1>
-    ${(() => { const P = L.planMes(mes); return P.pendientes.length ? `<a class="banner" href="#/mes" style="display:block;text-decoration:none">📬 Reparto de ${esc(MESES_LARGOS_MES(mes))} pendiente: ${P.pendientes.length} traspaso${P.pendientes.length > 1 ? 's' : ''} por ${eur(P.pendientes.reduce((s2, l) => s2 + l.plan, 0), 0)} →</a>` : ''; })()}
+    ${(() => { const P = L.planMes(mes); if (!P.hasPlan && L.fuentePlan(mes)) return `<a class="banner" href="#/mes" style="display:block;text-decoration:none">📝 Prepara el plan de ${esc(MESES_LARGOS_MES(mes))}: copia el del mes anterior y ajústalo →</a>`; return P.pendientes.length ? `<a class="banner" href="#/mes" style="display:block;text-decoration:none">📬 Reparto de ${esc(MESES_LARGOS_MES(mes))} pendiente: ${P.pendientes.length} traspaso${P.pendientes.length > 1 ? 's' : ''} por ${eur(P.pendientes.reduce((s2, l) => s2 + l.plan, 0), 0)} →</a>` : ''; })()}
     <div class="kpis">
       <div class="kpi"><div class="lbl">Gasto corriente del mes</div><div class="val">${eur(g.total)}</div><div class="sub">${gp.total ? `${diff >= 0 ? '+' : ''}${eur(diff, 0)} vs ${MESES[Number(prev.slice(5)) - 1].toLowerCase()} (${eur(gp.total, 0)})` : 'sin imprevistos ni amortizaciones'}</div></div>
       <div class="kpi"><div class="lbl">Ingresos del mes</div><div class="val">${eur(ingresos, 0)}</div><div class="sub">Resultado: <span class="${cls(ingresos - g.total)}">${eur(round2(L.pyg(mes.slice(0, 4)).resultado[Number(mes.slice(5)) - 1]), 0)}</span></div></div>
@@ -499,47 +499,58 @@ function editEntry(id) {
 }
 
 // ---------------- MES (plan y reparto, criterio de caja) ----------------
-const PLANTILLA_2026 = [['5722', 200], ['5724', 100], ['5725', 100], ['5723', 110], ['5726', 100], ['540', 1100]];
+// Cada mes tiene su propio plan. Un mes nuevo se empieza copiando el anterior; los cambios solo afectan a ese mes.
 const GRUPO_REP = { sobre: ['Sobres para gastar', 'Dinero que mandas a una cuenta para gastar desde ella.'], fondo: ['Imprevistos', 'Lo que apartas para lo que no se puede prever.'], ahorro: ['Ahorro e inversión', 'Lo que mandas a largo plazo.'] };
+const MESES_LARGOS_MES = (m) => mesLargo(m).split(' ')[0];
 
 function viewMes() {
   const L = S.libro; const m = S.mes; const P = L.planMes(m);
-  const tplVacia = !(L.db.Reparto || []).some((x) => !truthy(x.borrado));
   const principal = L.principal; const nPrin = principal ? L.nombre(principal) : 'tu cuenta principal';
-  const curMonth = ym(todayISO());
-  const tick = (ok, plan) => (ok ? '<span class="chip ok">✓ hecho</span>' : plan > 0 ? '<span class="chip">pendiente</span>' : '');
   const money = (v) => `<span class="amount">${eur(v, Math.abs(v) % 1 ? 2 : 0)}</span>`;
+  const tick = (ok, plan) => (ok ? '<span class="chip ok">✓ hecho</span>' : plan > 0 ? '<span class="chip">pendiente</span>' : '');
+
+  if (!P.hasPlan) {
+    const src = L.fuentePlan(m);
+    view().innerHTML = `${periodBar(viewMes, { allowYear: false })}
+      <div class="card"><h2 style="margin-top:0">Plan de ${esc(mesLargo(m))}</h2>
+        <p class="muted">Aquí decides qué ingresos esperas este mes y a qué cuentas mandas el dinero. Cada mes tiene su propio plan.</p>
+        <div class="stack">
+          ${src ? `<button class="btn primary block" id="copy">${src.mes ? `Copiar el plan de ${esc(mesLargo(src.mes))}` : 'Copiar mi reparto anterior'}</button>
+            ${(() => { const nl = new Set(src.rows.lines.map((l) => l.code)).size; const ni = new Set(src.rows.ingresos.filter((i) => !i.extra).map((i) => i.code)).size; const rep = src.rows.lines.length - nl; return `<p class="small muted" style="margin:0">${nl} cuenta${nl === 1 ? '' : 's'} de reparto${ni ? ` y ${ni} fuente${ni === 1 ? '' : 's'} de ingreso` : ''}${rep ? ` (había ${rep} repetidas: se quedan una vez)` : ''}. Luego lo cambias a tu gusto.</p>`; })()}` : ''}
+          <button class="btn block ${src ? '' : 'primary'}" id="blank">Empezar en blanco</button>
+        </div></div>
+      ${P.fijos.length || P.ingresosReal ? `<p class="small muted">Este mes ya hay ${eur(P.ingresosReal, 0)} de ingresos y ${P.fijos.length} gasto${P.fijos.length === 1 ? '' : 's'} fijo${P.fijos.length === 1 ? '' : 's'} automático${P.fijos.length === 1 ? '' : 's'}.</p>` : ''}`;
+    $('#copy')?.addEventListener('click', (e) => copiarPlan(m, src, e.currentTarget));
+    $('#blank').onclick = async (e) => { e.currentTarget.disabled = true; try { await S.store.add('RepartoMes', [{ id: uid(), mes: m, linea: 'inicio', hacia: '', importe: 0, borrado: '' }]); await reload(); viewMes(); } catch (err) { fail(err); } };
+    return;
+  }
+
+  const ingHtml = P.ingresos.length ? `<ul class="list">${P.ingresos.map((i) => `<li class="${i.extra ? '' : 'tap'}" ${i.extra ? '' : `data-ing="${esc(i.linea)}"`}><span class="pk-ic">${emojiFor(L.byCode[i.code])}</span><div class="grow"><div class="t">${esc(i.nombre)}${i.extra ? ' <span class="chip">fuera del plan</span>' : ''}</div><div class="s">${i.extra ? '' : `previsto ${eur(i.plan, 0)} · `}entrado ${eur(i.real)}</div>${i.plan ? `<div class="bar"><span style="width:${Math.min(100, (i.real / i.plan) * 100)}%"></span></div>` : ''}</div>${money(i.plan || i.real)}</li>`).join('')}</ul>` : '<div class="empty">Añade tus fuentes de ingreso previstas (nómina, cuenta propia…).</div>';
   const linesHtml = ['sobre', 'fondo', 'ahorro'].map((g) => {
     const list = P.lines.filter((l) => l.grupo === g); if (!list.length) return '';
     return `<h3>${GRUPO_REP[g][0]}</h3><ul class="list">${list.map((l) => {
       let sub = '';
       if (g === 'sobre') { const q = round2((l.done ? l.real : l.plan) - l.gastado); sub = `gastado ${eur(l.gastado)} · <span class="${q < 0 ? 'neg' : ''}">${q < 0 ? `te pasas ${eur(-q)}` : `quedan ${eur(q)}`}</span>`; }
-      if (g === 'fondo' && L.inicio) sub = `en el fondo: ${eur(L.balanceToDate(l.code))}`;
-      if (g === 'ahorro' && L.inicio) sub = `saldo: ${eur(L.balanceToDate(l.code))}`;
+      if (g !== 'sobre' && L.inicio) sub = `saldo: ${eur(L.balanceToDate(l.code))}`;
       return `<li class="tap" data-line="${esc(l.linea)}"><span class="pk-ic">${emojiFor(L.byCode[l.code])}</span><div class="grow"><div class="t">${esc(l.nombre)} ${tick(l.done, l.plan)}</div><div class="s">${sub}</div></div>${money(l.done ? l.real : l.plan)}</li>`;
     }).join('')}</ul>`;
   }).join('');
-  const fijosHtml = P.fijos.length ? `<ul class="list">${P.fijos.map((f) => `<li class="tap" data-fijo="${esc(f.id)}"><span class="pk-ic">${emojiFor(L.byCode[f.code])}</span><div class="grow"><div class="t">${esc(f.nombre)} ${f.activo ? tick(f.real > 0, f.plan) : '<span class="chip">pausada</span>'}</div><div class="s">${f.activo ? `día ${esc(f.rec.dia)} · se apunta solo` : 'tócala para activarla'}</div></div>${money(f.real || f.plan || num(f.rec.importe))}</li>`).join('')}</ul>` : '<div class="empty">Sin gastos fijos. Se crean como automatizaciones.</div>';
+  const fijosHtml = P.fijos.length ? `<ul class="list">${P.fijos.map((f) => `<li class="tap" ${f.prestamo ? `data-pre="${esc(f.prestamo.id)}"` : `data-fijo="${esc(f.id)}"`}><span class="pk-ic">${emojiFor(L.byCode[f.code])}</span><div class="grow"><div class="t">${esc(f.nombre)} ${f.activo ? tick(f.real > 0, f.plan) : '<span class="chip">pausada</span>'}</div><div class="s">${f.activo ? `día ${esc(f.dia || f.rec?.dia)} · se apunta solo` : 'tócala para activarla'}</div></div>${money(f.real || f.plan || num(f.rec?.importe))}</li>`).join('')}</ul>` : '<div class="empty">Sin gastos fijos. Se crean como automatizaciones.</div>';
   const limites = L.presupuesto(m).filter((p) => L.kind(p.code) === 'gasto');
   const doneAll = P.lines.length && !P.pendientes.length;
-  const pendTotal = round2(P.pendientes.reduce((s, l) => s + l.plan, 0));
+  const pendTotal = round2(P.pendientes.reduce((s2, l) => s2 + l.plan, 0));
 
   view().innerHTML = `${periodBar(viewMes, { allowYear: false })}
-    ${tplVacia && !P.hasSnap ? `<div class="card" style="margin-bottom:12px"><strong>Monta tu reparto mensual</strong><p class="small muted">Es tu hoja de Excel: lo que entra cada mes y a qué cuenta lo mandas. Puedes empezar con lo que usabas en 2026 y cambiarlo después.</p>
-      <div class="stack"><button class="btn primary block" id="tpl2026">Empezar con mi reparto de 2026</button><button class="btn block" id="tplvacia">Empezar en blanco</button></div></div>` : ''}
-
-    <div class="card">
-      <div class="row between"><h3 style="margin:0">Ingresos</h3><button class="btn sm" id="editIng">Previsto: ${eur(P.ingresosPlan, 0)}</button></div>
-      <div class="row between" style="margin-top:8px"><span class="muted small">Entrado este mes</span><strong class="num">${eur(P.ingresosReal)}</strong></div>
-      ${P.ingresosPlan ? `<div class="bar"><span style="width:${Math.min(100, (P.ingresosReal / P.ingresosPlan) * 100)}%"></span></div>` : ''}
-    </div>
+    ${P.dupes ? `<div class="banner warn">Hay ${P.dupes} línea${P.dupes > 1 ? 's' : ''} repetida${P.dupes > 1 ? 's' : ''} en este mes. <button class="btn sm" id="dedupe" style="margin-left:6px">Juntarlas</button></div>` : ''}
+    <div class="card"><div class="row between"><h3 style="margin:0">Ingresos</h3><span class="num"><strong>${eur(P.ingresosReal, 0)}</strong> <span class="muted small">de ${eur(P.ingresosPlan, 0)}</span></span></div>
+      ${ingHtml}<button class="btn sm" id="addIng" style="margin-top:8px">+ Fuente de ingreso</button></div>
 
     <div class="card"><div class="row between"><h3 style="margin:0">Gastos fijos</h3><span class="num"><strong>${eur(P.fijosPlan, 0)}</strong></span></div>${fijosHtml}
       <button class="btn sm" id="addFijo" style="margin-top:8px">+ Gasto fijo</button></div>
 
     <div class="card"><div class="row between"><h3 style="margin:0">Reparto a cuentas</h3><span class="num"><strong>${eur(P.repartoPlan, 0)}</strong></span></div>
       ${linesHtml || '<div class="empty">Sin líneas de reparto.</div>'}
-      <button class="btn sm" id="addLine" style="margin-top:8px">+ Añadir línea</button></div>
+      <button class="btn sm" id="addLine" style="margin-top:8px">+ Añadir cuenta al reparto</button></div>
 
     <div class="card">
       <div class="row between"><div><h3 style="margin:0">Se queda en ${esc(nPrin)}</h3><div class="small muted">ingresos − fijos − reparto</div></div><button class="iconbtn" id="cfgMes" aria-label="Cambiar cuenta principal">⚙</button></div>
@@ -549,109 +560,83 @@ function viewMes() {
 
     ${P.lines.length ? (doneAll
     ? `<div class="banner">✓ Reparto de ${esc(mesLargo(m))} hecho. <button class="btn sm" id="undo" style="margin-left:6px">Deshacer</button></div>`
-    : `<button class="btn primary block" id="doRep" style="margin:4px 0 12px">Hacer reparto de ${esc(MESES_LARGOS_MES(m))} · ${P.pendientes.length} traspaso${P.pendientes.length > 1 ? 's' : ''} · ${eur(pendTotal, 0)}</button>`) : ''}
+    : `<button class="btn primary block" id="doRep" style="margin:12px 0">Hacer reparto de ${esc(MESES_LARGOS_MES(m))} · ${P.pendientes.length} traspaso${P.pendientes.length > 1 ? 's' : ''} · ${eur(pendTotal, 0)}</button>`) : ''}
 
     <details class="card"${limites.length ? ' open' : ''}><summary>Límites por categoría${limites.length ? ` (${limites.length})` : ''}</summary>
       <p class="small muted">Cuánto quieres gastar como máximo en cada cosa, la pagues desde donde la pagues.</p>
       ${limites.length ? sobresHtml(limites) : ''}
       <button class="btn sm" id="addcat" style="margin-top:8px">+ Límite de categoría</button></details>
-    <p class="small muted">${m < curMonth ? 'Mes pasado: los cambios de importe solo afectan a este mes.' : 'Al tocar una línea puedes cambiarla solo este mes o para todos los meses siguientes.'}</p>`;
+    <p class="small muted">Los cambios solo afectan a ${esc(mesLargo(m))}. El mes que viene empezarás copiando este plan.</p>`;
 
-  $('#tpl2026')?.addEventListener('click', () => initPlantilla(true));
-  $('#tplvacia')?.addEventListener('click', () => initPlantilla(false));
-  $('#editIng').onclick = editIngresos;
-  $('#addLine').onclick = () => editLinea(null);
+  $('#dedupe')?.addEventListener('click', () => juntarRepetidas(m));
+  $('#addIng').onclick = () => editLinea(null, 'ingreso');
+  $('#addLine').onclick = () => editLinea(null, 'reparto');
   $('#addFijo').onclick = () => editRecurrente(null);
   $('#cfgMes').onclick = cfgMes;
   $('#doRep')?.addEventListener('click', hacerReparto);
   $('#undo')?.addEventListener('click', deshacerReparto);
   $('#addcat').onclick = () => editSobre(null, 'gasto');
-  $$('[data-line]').forEach((li) => { li.onclick = () => editLinea(li.dataset.line); });
+  $$('[data-line]').forEach((li) => { li.onclick = () => editLinea(li.dataset.line, 'reparto'); });
+  $$('[data-ing]').forEach((li) => { li.onclick = () => editLinea(li.dataset.ing, 'ingreso'); });
   $$('[data-fijo]').forEach((li) => { li.onclick = () => editRecurrente(li.dataset.fijo); });
+  $$('[data-pre]').forEach((li) => { li.onclick = () => editPrestamo(li.dataset.pre); });
   bindRowItems();
 }
-const MESES_LARGOS_MES = (m) => mesLargo(m).split(' ')[0];
 
-async function initPlantilla(desde2026) {
-  const L = S.libro;
+async function copiarPlan(m, src, btn) {
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span>'; }
   try {
-    if (desde2026) {
-      const rows = PLANTILLA_2026.filter(([c]) => L.byCode[c]).map(([hacia, importe], i) => ({ id: uid(), orden: i + 1, hacia, importe, activo: 1, borrado: '' }));
-      await S.store.add('Reparto', rows);
-      if (!L.config.ingreso_previsto) await setConfig('ingreso_previsto', '2000');
+    const seen = new Map();
+    for (const l of [...src.rows.ingresos.filter((i) => !i.extra), ...src.rows.lines]) {
+      const k = String(l.code); if (!k) continue;
+      if (!seen.has(k)) seen.set(k, l.plan); // repetidas: se queda la primera
     }
-    if (!L.config.cuenta_principal && L.principal) await setConfig('cuenta_principal', L.principal);
-    if (!L.config.cuenta_fondo && L.fondo) await setConfig('cuenta_fondo', L.fondo);
-    // el traspaso al fondo ya va en el reparto: la automatización equivalente sobra
-    const dup = (L.db.Recurrentes || []).filter((r) => r.clase === 'traspaso' && String(r.debe) === L.fondo && !truthy(r.activo));
-    if (dup.length) await S.store.update('Recurrentes', dup.map((r) => ({ ...r, nombre: `${r.nombre} (borrada)` })));
-    await reload(); toast(desde2026 ? 'Plantilla creada: cámbiala cuando quieras' : 'Añade tus líneas con «+ Añadir línea»'); render();
+    const rows = [...seen].map(([hacia, importe]) => { const id = uid(); return { id, mes: m, linea: id, hacia, importe, borrado: '' }; });
+    if (src.tpl && src.rows.ingresosPlan && !src.rows.ingresos.length && S.libro.byCode['700']) { const id = uid(); rows.unshift({ id, mes: m, linea: id, hacia: '700', importe: src.rows.ingresosPlan, borrado: '' }); }
+    if (!rows.length) rows.push({ id: uid(), mes: m, linea: 'inicio', hacia: '', importe: 0, borrado: '' });
+    await S.store.add('RepartoMes', rows);
+    if (!S.libro.config.cuenta_principal && S.libro.principal) await setConfig('cuenta_principal', S.libro.principal);
+    await reload(); toast('Plan copiado: cámbialo a tu gusto'); viewMes();
+  } catch (e) { fail(e); viewMes(); }
+}
+
+async function juntarRepetidas(m) {
+  const L = S.libro; const P = L.planMes(m); const seen = new Set(); const kill = []; const killMov = [];
+  for (const l of [...P.ingresos.filter((i) => !i.extra), ...P.lines]) {
+    if (seen.has(l.code)) { kill.push({ ...l.row, borrado: 1 }); if (l.done) killMov.push({ ...l.done, borrado: 1 }); } else seen.add(l.code);
+  }
+  if (!kill.length) return;
+  try {
+    await S.store.update('RepartoMes', kill); if (killMov.length) await S.store.update('Diario', killMov);
+    await reload(); toast(`${kill.length} línea${kill.length > 1 ? 's' : ''} repetida${kill.length > 1 ? 's' : ''} quitada${kill.length > 1 ? 's' : ''}`); viewMes();
   } catch (e) { fail(e); }
 }
 
-// copia la plantilla al mes para poder cambiarlo sin tocar la plantilla
-async function ensureSnapshot(m) {
-  const L = S.libro; const P = L.planMes(m);
-  if (P.hasSnap) return;
-  const rows = P.lines.map((l) => ({ id: uid(), mes: m, linea: l.linea, hacia: l.code, importe: l.plan, borrado: '' }));
-  rows.push({ id: uid(), mes: m, linea: 'ingresos', hacia: '', importe: P.ingresosPlan, borrado: '' });
-  await S.store.add('RepartoMes', rows); await reload();
-}
-const snapRow = (m, linea) => (S.libro.db.RepartoMes || []).find((x) => x.mes === m && String(x.linea) === String(linea));
-
-function scopeField(m, allowTpl = true) {
-  const past = m < ym(todayISO());
-  return allowTpl && !past ? { key: 'ambito', label: '¿Para cuándo?', type: 'select', options: [['mes', `Solo ${mesLargo(m)}`], ['tpl', `${mesLargo(m)} y los meses siguientes`]] } : null;
-}
-
-function editLinea(linea) {
+// tipo: 'reparto' (a una cuenta tuya) o 'ingreso' (fuente de ingreso)
+function editLinea(linea, tipo) {
   const L = S.libro; const m = S.mes; const P = L.planMes(m);
-  const l = linea ? P.lines.find((x) => x.linea === String(linea)) : null;
+  const l = linea ? [...P.lines, ...P.ingresos].find((x) => x.linea === String(linea)) : null;
+  const ing = tipo === 'ingreso';
   const fields = [
-    { key: 'hacia', label: 'Cuenta', type: 'account', filter: (c) => kindOf(c) === 'dinero' && c.codigo !== L.principal, createKind: 'dinero', required: true },
-    { key: 'importe', label: 'Importe al mes €', type: 'number', required: true },
+    ing ? { key: 'hacia', label: 'Fuente de ingreso', type: 'account', filter: (c) => isIngreso(c), createKind: 'ingreso', required: true }
+      : { key: 'hacia', label: 'Cuenta', type: 'account', filter: (c) => kindOf(c) === 'dinero' && c.codigo !== L.principal, createKind: 'dinero', required: true },
+    { key: 'importe', label: ing ? 'Previsto este mes €' : 'Importe este mes €', type: 'number', required: true },
   ];
-  const sc = scopeField(m); if (sc) fields.push(sc);
   const extra = l?.done ? `<div class="banner" style="margin-bottom:10px">Este traspaso ya está hecho (${eur(l.real)}). Si cambias el importe, se corrige también el movimiento.</div>` : '';
   formModal({
-    title: l ? l.nombre : 'Nueva línea de reparto', fields, extra,
-    values: l ? { hacia: l.code, importe: l.plan, ambito: 'tpl' } : { ambito: 'tpl' },
+    title: l ? l.nombre : (ing ? 'Nueva fuente de ingreso' : 'Añadir cuenta al reparto'), fields, extra,
+    values: l ? { hacia: l.code, importe: l.plan } : {},
     onSave: async (d) => {
-      const tpl = d.ambito === 'tpl' && sc;
-      if (!l) { // nueva
-        if (tpl) {
-          const row = { id: uid(), orden: (L.db.Reparto || []).length + 1, hacia: d.hacia, importe: d.importe, activo: 1, borrado: '' };
-          await S.store.add('Reparto', [row]);
-          if (P.hasSnap) await S.store.add('RepartoMes', [{ id: uid(), mes: m, linea: row.id, hacia: d.hacia, importe: d.importe, borrado: '' }]);
-        } else { await ensureSnapshot(m); await S.store.add('RepartoMes', [{ id: uid(), mes: m, linea: uid(), hacia: d.hacia, importe: d.importe, borrado: '' }]); }
-        await reload(); return;
-      }
-      if (tpl && l.tpl) await S.store.update('Reparto', [{ ...l.tpl, hacia: d.hacia, importe: d.importe }]);
-      if (!tpl || P.hasSnap) { await ensureSnapshot(m); const sr = snapRow(m, l.linea); if (sr) await S.store.update('RepartoMes', [{ ...sr, hacia: d.hacia, importe: d.importe }]); }
+      if (!l) { const id = uid(); await S.store.add('RepartoMes', [{ id, mes: m, linea: id, hacia: d.hacia, importe: d.importe, borrado: '' }]); await reload(); return; }
+      await S.store.update('RepartoMes', [{ ...l.row, hacia: d.hacia, importe: d.importe }]);
       if (l.done) await S.store.update('Diario', [{ ...l.done, debe: d.hacia, importe: round2(d.importe) }]);
       await reload();
     },
     onDelete: l ? async () => {
-      const tpl = sc && confirm(`¿Quitarla también de los meses siguientes?\n\nAceptar: sí, de la plantilla.\nCancelar: solo de ${mesLargo(m)}.`);
-      if (tpl && l.tpl) await S.store.update('Reparto', [{ ...l.tpl, borrado: 1 }]);
-      if (!tpl || P.hasSnap) { await ensureSnapshot(m); const sr = snapRow(m, l.linea); if (sr) await S.store.update('RepartoMes', [{ ...sr, borrado: 1 }]); }
+      await S.store.update('RepartoMes', [{ ...l.row, borrado: 1 }]);
       if (l.done) await S.store.update('Diario', [{ ...l.done, borrado: 1 }]);
       await reload();
     } : null,
-  });
-}
-
-function editIngresos() {
-  const L = S.libro; const m = S.mes; const P = L.planMes(m);
-  const fields = [{ key: 'importe', label: 'Ingresos previstos €', type: 'number', required: true, hint: 'Nómina más lo que esperes cobrar este mes.' }];
-  const sc = scopeField(m); if (sc) fields.push(sc);
-  formModal({
-    title: `Ingresos de ${mesLargo(m)}`, fields, values: { importe: P.ingresosPlan, ambito: 'mes' },
-    onSave: async (d) => {
-      if (d.ambito === 'tpl' && sc) { await setConfig('ingreso_previsto', String(d.importe)); if (P.hasSnap) { const sr = snapRow(m, 'ingresos'); if (sr) await S.store.update('RepartoMes', [{ ...sr, importe: d.importe }]); } }
-      else { await ensureSnapshot(m); const sr = snapRow(m, 'ingresos'); if (sr) await S.store.update('RepartoMes', [{ ...sr, importe: d.importe }]); }
-      await reload();
-    },
   });
 }
 
@@ -673,9 +658,9 @@ async function hacerReparto() {
   if (!L.principal) { cfgMes(); return; }
   const fecha = m === ym(todayISO()) ? todayISO() : `${m}-01`;
   const rows = P.pendientes.map((l) => newEntry({ fecha, concepto: `Reparto ${MESES_LARGOS_MES(m)}: ${l.nombre}`, debe: l.code, haber: L.principal, importe: l.plan, clase: 'traspaso', origen: `rep:${m}:${l.linea}` }));
-  if (!confirm(`Se apuntarán ${rows.length} traspasos desde ${L.nombre(L.principal)} por ${eur(rows.reduce((s, r) => s + r.importe, 0))}. ¿Seguir?`)) return;
+  if (!confirm(`Se apuntarán ${rows.length} traspasos desde ${L.nombre(L.principal)} por ${eur(rows.reduce((s2, r) => s2 + r.importe, 0))}. ¿Seguir?`)) return;
   const btn = $('#doRep'); if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span>'; }
-  try { await ensureSnapshot(m); await S.store.add('Diario', rows); await reload(); toast('Reparto hecho'); render(); } catch (e) { fail(e); render(); }
+  try { await S.store.add('Diario', rows); await reload(); toast('Reparto hecho'); render(); } catch (e) { fail(e); render(); }
 }
 async function deshacerReparto() {
   const L = S.libro; const m = S.mes;
@@ -1003,7 +988,7 @@ function viewAjustes() {
       <button class="btn block" id="addact" style="margin-top:8px">Añadir activo</button></div>
 
     <h2>Hipoteca y préstamos</h2>
-    <div class="card"><ul class="list">${pre.map((p) => { const cq = cuadroPrestamo(p); const hoy = todayISO(); const next = cq.find((q) => q.fecha > hoy); const pend = [...cq].reverse().find((q) => q.fecha <= hoy)?.pendiente ?? num(p.capital); return `<li class="tap" data-pre="${esc(p.id)}"><div class="grow"><div class="t">${esc(p.nombre)}</div><div class="s">Cuota ${eur(cq[0]?.cuota || 0)} · ${esc(p.interes_anual)} % · pendiente ${eur(pend)}${next ? ` · próxima ${esc(next.fecha)}` : ''}</div></div></li>`; }).join('') || '<li class="muted">Ninguno</li>'}</ul>
+    <div class="card"><ul class="list">${pre.map((p) => { const cq = cuadroPrestamo(p); const hoy = todayISO(); const next = cq.find((q) => q.fecha > hoy); const pend = [...cq].reverse().find((q) => q.fecha <= hoy)?.pendiente ?? num(p.capital); const f = participacion(p); return `<li class="tap" data-pre="${esc(p.id)}"><span class="pk-ic">🏛️</span><div class="grow"><div class="t">${esc(p.nombre)}${f < 1 ? ` <span class="chip">tu parte ${Math.round(f * 100)} %</span>` : ''}</div><div class="s">Cuota ${eur((cq[0]?.cuota || 0) * f)}${f < 1 ? ` (de ${eur(cq[0]?.cuota || 0)})` : ''} · ${esc(p.interes_anual)} % · te quedan ${eur(pend * f)}${next ? ` · próxima ${esc(next.fecha)}` : ''}</div></div></li>`; }).join('') || '<li class="muted">Ninguno</li>'}</ul>
       <button class="btn block" id="addpre" style="margin-top:8px">Añadir hipoteca o préstamo</button>
       <p class="small muted">Cada cuota se apunta sola separando intereses (gasto 662) y capital (baja la deuda 170).</p></div>
 
@@ -1124,14 +1109,15 @@ function editPrestamo(id) {
     { key: 'cuenta_banco', label: 'Se paga desde', type: 'account', filter: isMoney, required: true },
     { key: 'cuenta_pasivo', label: 'Deuda', type: 'account', filter: (c) => kindOf(c) === 'deuda', createKind: 'deuda', required: true },
     { key: 'cuenta_interes', label: 'Los intereses van a', type: 'account', filter: (c) => c.tipo === 'gasto', required: true },
+    { key: 'participacion', label: 'Tu parte %', type: 'number', hint: 'Si la hipoteca es a medias con otra persona, pon 50. Se apuntará solo tu parte de cada cuota.' },
     { key: 'activo', label: 'Generar cuotas automáticamente', type: 'checkbox' },
   ];
-  const cuadro = p ? cuadroPrestamo(p) : [];
-  const extra = p ? `<details class="card" style="margin-bottom:12px"><summary>Ver cuadro de amortización (${cuadro.length} cuotas)</summary><div class="tablewrap" style="margin-top:8px;max-height:280px;overflow:auto"><table class="rep"><tr><th>#</th><th>Fecha</th><th>Cuota</th><th>Intereses</th><th>Capital</th><th>Pendiente</th></tr>${cuadro.map((q) => `<tr><td>${q.n}</td><td class="n">${q.fecha}</td><td class="n">${fmt(q.cuota)}</td><td class="n">${fmt(q.intereses)}</td><td class="n">${fmt(q.capital)}</td><td class="n">${fmt(q.pendiente, 0)}</td></tr>`).join('')}</table></div></details>`
-    : '<p class="hint">Antes, registra la deuda: en «Saldos iniciales» (lo pendiente el día que empiezas) o con un asiento libre «Banco a Hipoteca» el día que la firmes.</p>';
+  const cuadro = p ? cuadroPrestamo(p) : []; const fp = p ? participacion(p) : 1;
+  const extra = p ? `<details class="card" style="margin-bottom:12px"><summary>Ver cuadro de amortización (${cuadro.length} cuotas)</summary><div class="tablewrap" style="margin-top:8px;max-height:280px;overflow:auto"><table class="rep"><tr><th>#</th><th>Fecha</th><th>Cuota</th>${fp < 1 ? '<th>Tu parte</th>' : ''}<th>Intereses</th><th>Capital</th><th>Pendiente</th></tr>${cuadro.map((q) => `<tr><td>${q.n}</td><td class="n">${q.fecha}</td><td class="n">${fmt(q.cuota)}</td>${fp < 1 ? `<td class="n">${fmt(q.cuota * fp)}</td>` : ''}<td class="n">${fmt(q.intereses * fp)}</td><td class="n">${fmt(q.capital * fp)}</td><td class="n">${fmt(q.pendiente * fp, 0)}</td></tr>`).join('')}</table></div></details>`
+    : '<p class="hint">Pon el capital, interés y plazo de la hipoteca completa: Financito calcula tu parte. La deuda en sí métela en «Saldos iniciales» (tu parte de lo pendiente) o con un asiento libre el día que la firmes.</p>';
   formModal({
     title: p ? 'Editar préstamo' : 'Nueva hipoteca o préstamo', fields, extra,
-    values: p ? { ...p, primera_cuota: normDate(p.primera_cuota) } : { nombre: 'Hipoteca', cuenta_pasivo: '170', cuenta_interes: '662', activo: 1, cuenta_banco: L.cuentas.find(isTes)?.codigo },
+    values: p ? { ...p, primera_cuota: normDate(p.primera_cuota), participacion: p.participacion || 100 } : { nombre: 'Hipoteca', cuenta_pasivo: '170', cuenta_interes: '662', activo: 1, participacion: 100, cuenta_banco: L.principal || L.cuentas.find(isTes)?.codigo },
     onSave: async (d) => { const row = { ...(p || { id: uid() }), ...d }; if (p) await S.store.update('Prestamos', [row]); else await S.store.add('Prestamos', [row]); await reload({ automations: true }); },
     onDelete: p ? async () => updateRows('Prestamos', [{ ...p, activo: 0 }]) : null,
   });
