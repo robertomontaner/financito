@@ -881,7 +881,10 @@ function mayorCuenta(code) {
         <div class="t-cell l t-h">Debe <small>${dn ? 'suma' : 'resta'}</small></div><div class="t-cell t-h">Haber <small>${dn ? 'resta' : 'suma'}</small></div>
         ${rows.map((r) => { const side = r.debe === code ? 'd' : 'h'; const real = tLine(r, side); const gh = S.verMitad === false ? '' : ghost(r, side); return side === 'd' ? `<div class="t-cell l">${real}</div><div class="t-cell">${gh}</div>` : `<div class="t-cell l">${gh}</div><div class="t-cell">${real}</div>`; }).join('') || '<div class="t-cell l"><div class="t-empty">—</div></div><div class="t-cell"><div class="t-empty">—</div></div>'}
         <div class="t-cell l"><div class="t-sum">${fmt(sd)}</div></div><div class="t-cell"><div class="t-sum">${fmt(sh)}</div></div>
+        ${S.verMitad === false ? '' : `<div class="t-cell l"><div class="t-gsum"><span>+ en gris</span>${fmt(sh)}</div></div><div class="t-cell"><div class="t-gsum"><span>+ en gris</span>${fmt(sd)}</div></div>
+        <div class="t-cell l"><div class="t-cuadre"><span>Debe total</span>${fmt(sd + sh)}</div></div><div class="t-cell"><div class="t-cuadre"><span>Haber total</span><span class="t-ok">${fmt(sd + sh)} <b class="pos">✓</b></span></div></div>`}
       </div>
+      ${S.verMitad === false ? '' : `<p class="small muted" style="margin:6px 2px 0">Con la otra mitad, debe y haber suman lo mismo (${eur(sd + sh)}): cada euro que entra en una cuenta sale de otra. El <strong>${pyg ? 'acumulado' : 'saldo'}</strong> de esta cuenta solo cuenta lo negro.</p>`}
       <div class="row between" style="margin-top:8px"><button class="btn sm" id="mitad">${S.verMitad === false ? 'Ver la otra mitad de cada apunte' : 'Ocultar la otra mitad'}</button></div>
       <div class="t-saldo">${pyg ? 'Acumulado' : 'Saldo final'} <strong class="${cls(fin)}">${eur(fin)}</strong></div>
     </div>

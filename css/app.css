@@ -349,3 +349,8 @@ table.rep tr.sec2 + tr td:first-child, table.rep tr.sec2 ~ tr.tap td:first-child
 .t-gn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); opacity: .75; }
 .t-ga { font-variant-numeric: tabular-nums; font-style: italic; }
 .t-grid.ghosts .t-desc small { display: none; }
+.t-gsum, .t-cuadre { display: flex; justify-content: space-between; gap: 6px; font-variant-numeric: tabular-nums; padding: 3px 0; }
+.t-gsum { color: var(--muted); font-style: italic; font-size: 12.5px; }
+.t-gsum span, .t-cuadre span { font-size: 11px; color: var(--muted); font-style: normal; text-transform: uppercase; letter-spacing: .04em; align-self: center; }
+.t-cuadre { font-weight: 700; border-top: 3px double var(--text); margin-top: 2px; padding-top: 4px; }
+.t-cuadre .t-ok { font-size: inherit; color: inherit; text-transform: none; letter-spacing: 0; }
