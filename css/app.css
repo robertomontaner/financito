@@ -271,3 +271,5 @@ table.rep tr.sec2 + tr td:first-child, table.rep tr.sec2 ~ tr.tap td:first-child
 .t-sum { text-align: right; font-weight: 700; border-top: 1px solid var(--text); margin-top: 4px; padding-top: 4px; font-variant-numeric: tabular-nums; }
 .t-empty { text-align: center; color: var(--muted); padding: 6px; }
 .t-saldo { text-align: right; padding-top: 10px; font-size: 15px; }
+
+.t-go{color:inherit;text-decoration:underline dotted;text-underline-offset:2px}

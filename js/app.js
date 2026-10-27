@@ -823,30 +823,37 @@ function mayorCuenta(code) {
   const L = S.libro; const [from, to] = periodRange(); const dn = L.debitNormal(code);
   const sign = (r) => (r.debe === code ? 1 : -1) * (dn ? 1 : -1) * r.importe;
   const rowsAll = L.activeRows.filter((r) => r.debe === code || r.haber === code).sort((a, b) => (a.fecha + (a.creado || '')).localeCompare(b.fecha + (b.creado || '')));
-  const ini = round2(rowsAll.filter((r) => r.fecha < from).reduce((s, r) => s + sign(r), 0));
+  const c = L.byCode[code]; const k = c ? kindOf(c) : (/^[67]/.test(code) ? (code[0] === '6' ? 'gasto' : 'ingreso') : '');
+  const pyg = k === 'gasto' || k === 'ingreso'; const yStart = `${from.slice(0, 4)}-01-01`;
+  // las cuentas de gasto/ingreso se ponen a cero cada 1 de enero
+  const ini = round2(rowsAll.filter((r) => r.fecha < from && (!pyg || r.fecha >= yStart)).reduce((s, r) => s + sign(r), 0));
   const rows = rowsAll.filter((r) => r.fecha >= from && r.fecha <= to);
   let saldo = ini; const d = rows.filter((r) => r.debe === code); const h = rows.filter((r) => r.haber === code);
   const sd = round2(d.reduce((s, r) => s + r.importe, 0)); const sh = round2(h.reduce((s, r) => s + r.importe, 0));
   const fin = round2(ini + (dn ? sd - sh : sh - sd));
-  const tLine = (r, side) => `<div class="t-line tap" data-id="${esc(r.id)}"><span class="t-date">${esc(shortDate(r.fecha))}</span><span class="t-desc">${esc(r.concepto || '')}<small>${esc(L.nombre(side === 'd' ? r.haber : r.debe))}</small></span><span class="t-amt">${fmt(r.importe)}</span></div>`;
-  const c = L.byCode[code];
+  const tLine = (r, side) => `<div class="t-line tap" data-id="${esc(r.id)}"><span class="t-date">${esc(shortDate(r.fecha))}</span><span class="t-desc">${esc(r.concepto || '')}<small><a href="#" class="t-go" data-go="${esc(side === 'd' ? r.haber : r.debe)}">${esc(L.nombre(side === 'd' ? r.haber : r.debe))}</a></small></span><span class="t-amt">${fmt(r.importe)}</span></div>`;
+  const other = (k === 'gasto' ? 'Una cuenta de gasto casi solo tiene <strong>debe</strong>: cada gasto la hace crecer. La otra mitad de cada apunte está en el <strong>haber del banco</strong> con el que pagaste. Toca el nombre del banco para verlo.'
+    : k === 'ingreso' ? 'Una cuenta de ingreso casi solo tiene <strong>haber</strong>. La otra mitad de cada apunte está en el <strong>debe del banco</strong> donde entró el dinero. Toca el nombre del banco para verlo.'
+    : k === 'dinero' ? 'En un banco el <strong>debe</strong> es lo que entra (ingresos, traspasos recibidos) y el <strong>haber</strong> lo que sale (gastos, traspasos enviados). Toca la cuenta en gris para ir a la otra mitad del apunte.' : '');
   $('#inf').innerHTML = `${periodBar(() => mayorCuenta(code))}
     <div class="row between" style="margin-bottom:8px"><button class="btn sm" id="back">‹ Todas las cuentas</button><span class="chip">${esc(c ? KIND_LABEL[kindOf(c)] : L.tipo(code))}</span></div>
     <div class="taccount">
-      <div class="t-title"><span class="pk-ic">${emojiFor(c)}</span><div><div class="t-name">${esc(L.nombre(code))}</div><div class="small muted">Cuenta ${esc(code)} · saldo inicial ${eur(ini)}</div></div></div>
+      <div class="t-title"><span class="pk-ic">${emojiFor(c)}</span><div><div class="t-name">${esc(L.nombre(code))}</div><div class="small muted">Cuenta ${esc(code)} · ${pyg ? 'acumulado del año antes de este periodo' : 'saldo inicial'} ${eur(ini)}</div></div></div>
       <div class="t-cols">
         <div class="t-col"><div class="t-h">Debe <small>${dn ? 'suma' : 'resta'}</small></div>${d.map((r) => tLine(r, 'd')).join('') || '<div class="t-empty">—</div>'}<div class="t-sum">${fmt(sd)}</div></div>
         <div class="t-col"><div class="t-h">Haber <small>${dn ? 'resta' : 'suma'}</small></div>${h.map((r) => tLine(r, 'h')).join('') || '<div class="t-empty">—</div>'}<div class="t-sum">${fmt(sh)}</div></div>
       </div>
-      <div class="t-saldo">Saldo final <strong class="${cls(fin)}">${eur(fin)}</strong></div>
+      <div class="t-saldo">${pyg ? 'Acumulado' : 'Saldo final'} <strong class="${cls(fin)}">${eur(fin)}</strong></div>
     </div>
+    ${other ? `<p class="small muted" style="margin:8px 2px">${other}</p>` : ''}
     <h3>Movimiento a movimiento</h3>
     <div class="tablewrap"><table class="rep"><tr><th>Fecha</th><th>Concepto · contrapartida</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr>
-      <tr class="dim"><td>${esc(shortDate(from))}</td><td>Saldo inicial</td><td></td><td></td><td class="n">${fmt(ini)}</td></tr>
-      ${rows.map((r) => { saldo = round2(saldo + sign(r)); return `<tr class="tap" data-id="${esc(r.id)}"><td>${esc(shortDate(r.fecha))}</td><td>${esc(r.concepto || '')} <span class="muted">· ${esc(L.nombre(r.debe === code ? r.haber : r.debe))}</span></td><td class="n">${r.debe === code ? fmt(r.importe) : ''}</td><td class="n">${r.haber === code ? fmt(r.importe) : ''}</td><td class="n">${fmt(saldo)}</td></tr>`; }).join('')}
+      <tr class="dim"><td>${esc(shortDate(from))}</td><td>${pyg ? 'Acumulado del año' : 'Saldo inicial'}</td><td></td><td></td><td class="n">${fmt(ini)}</td></tr>
+      ${rows.map((r) => { saldo = round2(saldo + sign(r)); return `<tr class="tap" data-id="${esc(r.id)}"><td>${esc(shortDate(r.fecha))}</td><td>${esc(r.concepto || '')} <span class="muted">· <a href="#" class="t-go" data-go="${esc(r.debe === code ? r.haber : r.debe)}">${esc(L.nombre(r.debe === code ? r.haber : r.debe))}</a></span></td><td class="n">${r.debe === code ? fmt(r.importe) : ''}</td><td class="n">${r.haber === code ? fmt(r.importe) : ''}</td><td class="n">${fmt(saldo)}</td></tr>`; }).join('')}
     </table></div>`;
   $('#back').onclick = () => { S.mayorCuenta = ''; infMayor(); };
   $$('#inf [data-id]').forEach((el) => { el.onclick = () => editEntry(el.dataset.id); });
+  $$('#inf [data-go]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); S.mayorCuenta = a.dataset.go; mayorCuenta(a.dataset.go); scrollTo(0, 0); }; });
 }
 
 // selector de periodo común: Mes / Año
