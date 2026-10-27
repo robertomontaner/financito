@@ -535,7 +535,7 @@ function viewMes() {
       return `<li class="tap" data-line="${esc(l.linea)}"><span class="pk-ic">${emojiFor(L.byCode[l.code])}</span><div class="grow"><div class="t">${esc(l.nombre)} ${tick(l.done, l.plan)}</div><div class="s">${sub}</div></div>${money(l.done ? l.real : l.plan)}</li>`;
     }).join('')}</ul>`;
   }).join('');
-  const fijosHtml = P.fijos.length ? `<ul class="list">${P.fijos.map((f) => `<li class="tap" ${f.prestamo ? `data-pre="${esc(f.prestamo.id)}"` : `data-fijo="${esc(f.id)}"`}><span class="pk-ic">${emojiFor(L.byCode[f.code])}</span><div class="grow"><div class="t">${esc(f.nombre)} ${f.activo ? tick(f.real > 0, f.plan) : '<span class="chip">pausada</span>'}</div><div class="s">${f.activo ? `día ${esc(f.dia || f.rec?.dia)} · se apunta solo` : 'tócala para activarla'}</div></div>${money(f.real || f.plan || num(f.rec?.importe))}</li>`).join('')}</ul>` : '<div class="empty">Sin gastos fijos. Se crean como automatizaciones.</div>';
+  const fijosHtml = P.fijos.length ? `<ul class="list">${P.fijos.map((f) => `<li class="tap" ${f.prestamo ? `data-pre="${esc(f.prestamo.id)}"` : `data-fijo="${esc(f.id)}"`}><span class="pk-ic">${emojiFor(L.byCode[f.code])}</span><div class="grow"><div class="t">${esc(f.nombre)} ${f.activo ? tick(f.real > 0, f.plan) : '<span class="chip">pausada</span>'}${f.override !== null && !f.gen ? `<span class="chip">${f.override ? 'importe especial' : 'saltado'}</span>` : ''}</div><div class="s">${f.activo ? `día ${esc(f.dia || f.rec?.dia)} · se apunta solo` : 'tócala para activarla'}</div></div>${money(f.real || f.plan || num(f.rec?.importe))}</li>`).join('')}</ul>` : '<div class="empty">Sin gastos fijos. Se crean como automatizaciones.</div>';
   const limites = L.presupuesto(m).filter((p) => L.kind(p.code) === 'gasto');
   const doneAll = P.lines.length && !P.pendientes.length;
   const pendTotal = round2(P.pendientes.reduce((s2, l) => s2 + l.plan, 0));
@@ -571,9 +571,11 @@ function viewMes() {
       <p class="small muted">Cuánto quieres gastar como máximo en cada cosa, la pagues desde donde la pagues.</p>
       ${limites.length ? sobresHtml(limites) : ''}
       <button class="btn sm" id="addcat" style="margin-top:8px">+ Límite de categoría</button></details>
+    ${L.inicio ? `<a class="card row between" href="#/informes" id="gocierre" style="text-decoration:none;color:inherit;margin-top:12px"><div><strong>Cierre de saldos</strong><div class="small muted">Pon lo que dice cada banco y corrige los descuadres</div></div><span class="pk-caret">›</span></a>` : ''}
     <p class="small muted">Los cambios solo afectan a ${esc(mesLargo(m))}. El mes que viene empezarás copiando este plan.</p>`;
 
   $('#dedupe')?.addEventListener('click', () => juntarRepetidas(m));
+  $('#gocierre')?.addEventListener('click', () => { S.informe = 'cuadre'; });
   $('#addIng').onclick = () => editLinea(null, 'ingreso');
   $('#addLine').onclick = () => editLinea(null, 'reparto');
   $('#addFijo').onclick = () => editRecurrente(null);
@@ -583,9 +585,37 @@ function viewMes() {
   $('#addcat').onclick = () => editSobre(null, 'gasto');
   $$('[data-line]').forEach((li) => { li.onclick = () => editLinea(li.dataset.line, 'reparto'); });
   $$('[data-ing]').forEach((li) => { li.onclick = () => editLinea(li.dataset.ing, 'ingreso'); });
-  $$('[data-fijo]').forEach((li) => { li.onclick = () => editRecurrente(li.dataset.fijo); });
+  $$('[data-fijo]').forEach((li) => { li.onclick = () => fijoMes(li.dataset.fijo); });
   $$('[data-pre]').forEach((li) => { li.onclick = () => editPrestamo(li.dataset.pre); });
   bindRowItems();
+}
+
+// tocar un gasto fijo en Mes: cambiar solo este mes o la automatización
+function fijoMes(id) {
+  const L = S.libro; const m = S.mes; const f = L.planMes(m).fijos.find((x) => String(x.id) === String(id)); if (!f) return;
+  if (!f.activo) { editRecurrente(id); return; }
+  const base = num(f.rec.importe);
+  openModal(`<h2>${esc(f.nombre)}</h2>
+    <p class="muted small">Normalmente ${eur(base)} el día ${esc(f.rec.dia)}.${f.gen ? ` En ${esc(mesLargo(m))} ya está apuntado (${eur(f.real)}).` : f.override !== null ? ` Este mes tiene un importe especial: ${eur(f.override)}.` : ''}</p>
+    <form novalidate><div class="field"><label class="lbl" for="fm_imp">Importe solo en ${esc(mesLargo(m))} €</label><input type="text" inputmode="decimal" id="fm_imp" value="${esc(String(f.gen ? f.real : (f.override ?? base)).replace('.', ','))}"><div class="hint">Pon 0 para saltártelo este mes. Los demás meses no cambian.</div></div>
+    <div class="actions"><button type="button" class="btn" data-all>Cambiar la automatización</button><button class="btn primary" type="submit">Guardar este mes</button></div>
+    ${f.override !== null && !f.gen ? '<button type="button" class="btn block" data-reset style="margin-top:8px">Volver al importe normal</button>' : ''}</form>`, (mm) => {
+    $('[data-all]', mm).onclick = () => { closeModal(); editRecurrente(id); };
+    $('[data-reset]', mm)?.addEventListener('click', async () => { try { const rows = (L.db.RepartoMes || []).filter((x) => x.mes === m && x.linea === `rec:${id}` && !truthy(x.borrado)); await S.store.update('RepartoMes', rows.map((x) => ({ ...x, borrado: 1 }))); await reload(); closeModal(); render(); } catch (e) { fail(e); } });
+    $('form', mm).onsubmit = async (e) => {
+      e.preventDefault(); const v = round2(num($('#fm_imp', mm).value));
+      try {
+        if (f.gen) { // ya apuntado: se corrige el movimiento
+          await S.store.update('Diario', [v ? { ...f.gen, importe: v } : { ...f.gen, borrado: 1 }]);
+        } else {
+          const old = (L.db.RepartoMes || []).filter((x) => x.mes === m && x.linea === `rec:${id}` && !truthy(x.borrado));
+          if (old.length) await S.store.update('RepartoMes', old.map((x) => ({ ...x, borrado: 1 })));
+          await S.store.add('RepartoMes', [{ id: uid(), mes: m, linea: `rec:${id}`, hacia: String(f.rec.debe), importe: v, borrado: '' }]);
+        }
+        await reload({ automations: true }); closeModal(); toast(v ? `${f.nombre}: ${eur(v)} en ${mesLargo(m)}` : `${f.nombre}: sin cargo en ${mesLargo(m)}`); render();
+      } catch (err) { fail(err); }
+    };
+  });
 }
 
 async function copiarPlan(m, src, btn) {
@@ -714,7 +744,7 @@ const INF_HELP = {
   pyg: ['PyG · ¿cuánto ahorro?', 'Solo cuentas de gasto (6) e ingreso (7). Ingresos − gastos = ahorro. Los traspasos y el reparto no aparecen: solo mueven dinero entre tus cuentas.'],
   balance: ['Balance · ¿cuánto tengo?', 'Lo que tienes (bancos, inversiones, bienes) y lo que debes, a final de mes. Sube cada mes lo que ahorras.'],
   graficos: ['Gráficos', 'Tus gastos e ingresos, en dibujo.'],
-  cuadre: ['Comprobar bancos', 'Compara lo que dice Financito con lo que dice tu banco.'],
+  cuadre: ['Cierre de saldos', 'Escribes lo que dice cada banco y Financito apunta una corrección donde no cuadre (céntimos, gastos olvidados).'],
 };
 function viewInformes() {
   if (!INFORMES.some(([k]) => k === S.informe)) S.informe = 'libro';
@@ -1027,32 +1057,48 @@ function editSobre(id, kind) {
 
 // ---------- comprobar con el banco ----------
 function infCuadre() {
-  const L = S.libro; const fecha = todayISO();
+  const L = S.libro;
   if (!L.inicio) { $('#inf').innerHTML = `${needsApertura()}<p class="muted">Cuando metas los saldos iniciales podrás comprobar aquí, cuenta por cuenta, que lo que dice Financito coincide con lo que tienes de verdad en el banco.</p>`; $('#goap')?.addEventListener('click', () => setTimeout(apertura, 50)); return; }
+  S.cuadreFecha ??= todayISO(); const fecha = S.cuadreFecha;
   const accs = L.cuentas.filter((c) => kindOf(c) === 'dinero' && (c.activa !== 0 || L.balanceToDate(c.codigo)));
-  const lastReal = (code) => (L.db.Saldos || []).filter((s) => String(s.cuenta) === code).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0];
-  $('#inf').innerHTML = `<div class="card" style="margin-bottom:12px"><strong>¿Cómo funciona?</strong><ol class="small" style="margin:6px 0 0;padding-left:18px"><li>Abre la app de tu banco y mira cuánto tienes ahora.</li><li>Escríbelo en su cuenta, abajo.</li><li>Si no coincide con Financito, te falta algún movimiento por apuntar.</li></ol></div>
-    <div class="card"><ul class="list">${accs.map((c) => { const lib = L.balanceToDate(c.codigo, fecha); const lr = lastReal(c.codigo); return `<li style="flex-wrap:wrap"><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="s">Según Financito: <strong>${eur(lib)}</strong>${lr ? ` · comprobado el ${esc(normDate(lr.fecha))}` : ''}</div></div>
-      <input type="text" inputmode="decimal" data-real="${esc(c.codigo)}" placeholder="En tu banco" aria-label="Saldo en tu banco de ${esc(c.nombre)}" style="width:130px;min-height:38px;padding:7px 10px;text-align:right">
-      <div data-diff="${esc(c.codigo)}" class="small" style="width:100%"></div></li>`; }).join('')}</ul></div>`;
+  const lastReal = (code) => (L.db.Saldos || []).filter((s2) => String(s2.cuenta) === code).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0];
+  const finMes = (() => { const d = new Date(); d.setDate(0); return d.toISOString().slice(0, 10); })();
+  $('#inf').innerHTML = `<div class="card" style="margin-bottom:12px"><strong>Cierre de saldos</strong>
+      <ol class="small" style="margin:6px 0 10px;padding-left:18px"><li>Elige la fecha (hoy o el último día del mes).</li><li>Escribe lo que dice cada banco ese día. Deja en blanco las que no quieras revisar.</li><li>Pulsa «Corregir diferencias»: se apunta un movimiento de corrección en cada cuenta que no cuadre.</li></ol>
+      <div class="row wrap"><input type="date" id="cfecha" value="${esc(fecha)}" style="width:auto;flex:1">${fecha !== finMes ? `<button class="btn sm" id="fmes">Fin de ${esc(MESES[Number(finMes.slice(5, 7)) - 1].toLowerCase())}</button>` : ''}${fecha !== todayISO() ? '<button class="btn sm" id="fhoy">Hoy</button>' : ''}</div></div>
+    <div class="card"><ul class="list">${accs.map((c) => { const lib = L.balanceToDate(c.codigo, fecha); const lr = lastReal(c.codigo); return `<li style="flex-wrap:wrap"><span class="pk-ic">${emojiFor(c)}</span><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="s">Según Financito: <strong>${eur(lib)}</strong>${lr ? ` · comprobado el ${esc(normDate(lr.fecha))}` : ''}</div></div>
+      <input type="text" inputmode="decimal" data-real="${esc(c.codigo)}" placeholder="En tu banco" aria-label="Saldo en tu banco de ${esc(c.nombre)}" style="width:120px;min-height:38px;padding:7px 10px;text-align:right">
+      <div data-diff="${esc(c.codigo)}" class="small" style="width:100%"></div></li>`; }).join('')}</ul></div>
+    <button class="btn primary block" id="fixall" style="margin-top:12px" disabled>Corregir diferencias</button>
+    <p class="small muted">Las correcciones van a «Descuadres» (gasto o ingreso pequeño) y aparecen en la PyG, así ves cuánto se te escapa al mes. En inversiones se apuntan como revalorización (ganancia o pérdida de valor). Si encuentras el movimiento que faltaba, apúntalo y borra la corrección.</p>`;
+  $('#cfecha').onchange = (e) => { S.cuadreFecha = e.target.value || todayISO(); infCuadre(); };
+  $('#fmes')?.addEventListener('click', () => { S.cuadreFecha = finMes; infCuadre(); });
+  $('#fhoy')?.addEventListener('click', () => { S.cuadreFecha = todayISO(); infCuadre(); });
+  const state = {};
+  const refreshBtn = () => { const n = Object.values(state).filter((x) => Math.abs(x.d) >= 0.01).length; const ok = Object.values(state).length; const b = $('#fixall'); b.disabled = !ok; b.textContent = n ? `Corregir ${n} diferencia${n > 1 ? 's' : ''}` : ok ? 'Guardar saldos comprobados' : 'Corregir diferencias'; };
   $$('[data-real]').forEach((inp) => {
     inp.oninput = () => {
       const code = inp.dataset.real; const box = $(`[data-diff="${code}"]`); const inv = L.byCode[code]?.grupo === 'Inversiones';
-      if (!inp.value.trim()) { box.innerHTML = ''; return; }
-      const real = num(inp.value); const lib = L.balanceToDate(code, fecha); const d = round2(real - lib);
-      if (Math.abs(d) < 0.01) { box.innerHTML = `<div class="row between" style="margin-top:6px"><span class="pos">✓ Cuadra</span><button class="btn sm" data-save="${esc(code)}">Marcar comprobado</button></div>`; }
-      else {
-        const msg = inv ? (d > 0 ? `Tu inversión vale ${eur(d)} más que lo apuntado (ha subido).` : `Tu inversión vale ${eur(-d)} menos que lo apuntado (ha bajado).`)
-          : (d < 0 ? `En el banco hay ${eur(-d)} menos: probablemente falta apuntar algún gasto.` : `En el banco hay ${eur(d)} más: probablemente falta apuntar algún ingreso.`);
-        box.innerHTML = `<div class="banner ${inv ? '' : 'warn'}" style="margin:8px 0 6px">${esc(msg)}</div><div class="row wrap">
-          ${inv ? '' : `<button class="btn sm" data-ver="${esc(code)}">Ver movimientos</button>`}
-          <button class="btn sm ${inv ? 'primary' : ''}" data-adj="${esc(code)}">${inv ? 'Actualizar valor' : 'Dar por buena la diferencia'}</button></div>`;
-      }
-      $(`[data-adj="${code}"]`, box)?.addEventListener('click', () => ajustar(code, real, d));
-      $(`[data-ver="${code}"]`, box)?.addEventListener('click', () => { S.diario = { ...S.diario, cuenta: code, mes: '', q: '' }; location.hash = '#/diario'; });
-      $(`[data-save="${code}"]`, box)?.addEventListener('click', async () => { try { await addRows('Saldos', [{ id: uid(), fecha, cuenta: code, saldo: real, notas: '' }]); toast('Comprobado'); infCuadre(); } catch (e) { fail(e); } });
+      if (!inp.value.trim()) { box.innerHTML = ''; delete state[code]; refreshBtn(); return; }
+      const real = num(inp.value); const d = round2(real - L.balanceToDate(code, fecha)); state[code] = { real, d, inv };
+      box.innerHTML = Math.abs(d) < 0.01 ? '<span class="pos">✓ Cuadra</span>'
+        : `<span class="${inv ? '' : 'neg'}">${inv ? (d > 0 ? `Tu inversión ha subido ${eur(d)}` : `Tu inversión ha bajado ${eur(-d)}`) : (d < 0 ? `Faltan ${eur(-d)}: algún gasto sin apuntar` : `Sobran ${eur(d)}: algún ingreso sin apuntar`)}</span> · <a href="#" data-ver="${esc(code)}">ver movimientos</a>`;
+      $(`[data-ver="${code}"]`, box)?.addEventListener('click', (e) => { e.preventDefault(); S.diario = { ...S.diario, cuenta: code, mes: '', q: '' }; location.hash = '#/diario'; });
+      refreshBtn();
     };
   });
+  $('#fixall').onclick = async () => {
+    const entries = Object.entries(state); const fixes = entries.filter(([, x]) => Math.abs(x.d) >= 0.01);
+    if (fixes.length && !confirm(`Se apuntarán ${fixes.length} correcciones con fecha ${fecha}:\n${fixes.map(([c, x]) => `· ${L.nombre(c)}: ${x.d > 0 ? '+' : ''}${eur(x.d)}`).join('\n')}\n\n¿Seguir?`)) return;
+    const btn = $('#fixall'); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+    try {
+      const asiento = uid();
+      const rows = fixes.map(([code, x]) => { const [debe, haber] = x.inv ? (x.d > 0 ? [code, '763'] : ['663', code]) : (x.d > 0 ? [code, '759'] : ['659', code]); return newEntry({ asiento, fecha, concepto: x.inv ? `Revalorización ${L.nombre(code)}` : `Corrección de saldo ${L.nombre(code)}`, debe, haber, importe: Math.abs(x.d), clase: 'ajuste', origen: 'cuadre' }); });
+      if (rows.length) await S.store.add('Diario', rows);
+      await S.store.add('Saldos', entries.map(([code, x]) => ({ id: uid(), fecha, cuenta: code, saldo: x.real, notas: Math.abs(x.d) >= 0.01 ? 'corregido' : 'cuadra' })));
+      await reload(); toast(rows.length ? `${rows.length} corrección${rows.length > 1 ? 'es' : ''} apuntada${rows.length > 1 ? 's' : ''}` : 'Saldos comprobados'); infCuadre();
+    } catch (e) { fail(e); infCuadre(); }
+  };
 }
 async function ajustar(code, real, d) {
   const L = S.libro; const inv = L.byCode[code]?.grupo === 'Inversiones';

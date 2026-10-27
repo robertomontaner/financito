@@ -226,12 +226,17 @@ export class Libro {
   // ---------- plan del mes (reparto) ----------
   get principal() { return String(this.config.cuenta_principal || (this.byCode['5721'] ? '5721' : '')); }
   get fondo() { return String(this.config.cuenta_fondo || (this.byCode['5726'] ? '5726' : '')); }
-  repRow(m, linea) { return this.activeRows.find((r) => r.origen === `rep:${m}:${linea}`); }
+  // importe distinto de una automatización solo en un mes (null = sin excepción)
+  recOverride(id, m) {
+    const o = (this.db.RepartoMes || []).filter((x) => x.mes === m && x.linea === `rec:${id}` && !truthy(x.borrado)).pop();
+    return o ? num(o.importe) : null;
+  }
+    repRow(m, linea) { return this.activeRows.find((r) => r.origen === `rep:${m}:${linea}`); }
   // Plan de un mes: cada mes tiene sus propias líneas (pestaña RepartoMes). Una línea va a una cuenta tuya (reparto) o es una fuente de ingreso (cuenta 7xx).
   planMes(m) {
     const all = (this.db.RepartoMes || []).filter((x) => x.mes === m);
-    const rows = all.filter((x) => !truthy(x.borrado) && x.linea !== 'ingresos' && x.hacia !== '');
-    const hasPlan = all.some((x) => !truthy(x.borrado));
+    const rows = all.filter((x) => !truthy(x.borrado) && x.linea !== 'ingresos' && x.hacia !== '' && !String(x.linea).startsWith('rec:'));
+    const hasPlan = all.some((x) => !truthy(x.borrado) && !String(x.linea).startsWith('rec:'));
     const lines = []; const ingresos = [];
     for (const x of rows) {
       const code = String(x.hacia); const c = this.byCode[code]; const plan = num(x.importe);
@@ -255,8 +260,11 @@ export class Libro {
     const fijos = (this.db.Recurrentes || []).filter((r) => r.nombre && !String(r.nombre).endsWith('(borrada)') && (r.clase || 'corriente') === 'corriente' && this.tipo(String(r.debe)) === 'gasto'
       && String(r.desde).slice(0, 7) <= m && (!r.hasta || String(r.hasta).slice(0, 7) >= m))
       .map((r) => {
-        const real = this.activeRows.filter((x) => x.origen === `rec:${r.id}:${m}`).reduce((s, x) => s + x.importe, 0);
-        return { id: r.id, nombre: r.nombre, code: String(r.debe), activo: truthy(r.activo), plan: truthy(r.activo) ? num(r.importe) : 0, real: round2(real), rec: r };
+        const gen = this.activeRows.filter((x) => x.origen === `rec:${r.id}:${m}`);
+        const real = gen.reduce((s, x) => s + x.importe, 0);
+        const ov = this.recOverride(r.id, m);
+        const base = truthy(r.activo) ? num(r.importe) : 0;
+        return { id: r.id, nombre: r.nombre, code: String(r.debe), activo: truthy(r.activo), plan: gen.length ? round2(real) : (ov === null ? base : ov), override: ov, real: round2(real), gen: gen[0], rec: r };
       });
     // cuotas de préstamos (tu parte): salen del banco aunque solo los intereses sean gasto
     for (const p of this.db.Prestamos || []) {
@@ -278,7 +286,7 @@ export class Libro {
 
   // de dónde copiar el plan para un mes sin plan: el último mes anterior con plan, o la plantilla antigua
   fuentePlan(m) {
-    const meses = [...new Set((this.db.RepartoMes || []).filter((x) => !truthy(x.borrado) && x.mes < m).map((x) => x.mes))].sort();
+    const meses = [...new Set((this.db.RepartoMes || []).filter((x) => !truthy(x.borrado) && x.mes < m && !String(x.linea).startsWith('rec:')).map((x) => x.mes))].sort();
     const prev = meses[meses.length - 1];
     if (prev) return { mes: prev, rows: this.planMes(prev) };
     const tpl = (this.db.Reparto || []).filter((x) => !truthy(x.borrado) && x.hacia !== '');
@@ -412,7 +420,9 @@ export class Libro {
       for (const m of monthsBetween(String(rc.desde).slice(0, 7), until)) {
         const fecha = dateInMonth(m, rc.dia);
         if (fecha > today) continue;
-        push({ asiento: uid(), fecha, concepto: rc.nombre, debe: String(rc.debe), haber: String(rc.haber), importe: round2(num(rc.importe)), clase: rc.clase || 'corriente', origen: `rec:${rc.id}:${m}` });
+        const ov = this.recOverride(rc.id, m); const imp = ov === null ? num(rc.importe) : ov;
+        if (!imp) continue; // saltado ese mes
+        push({ asiento: uid(), fecha, concepto: rc.nombre, debe: String(rc.debe), haber: String(rc.haber), importe: round2(imp), clase: rc.clase || 'corriente', origen: `rec:${rc.id}:${m}` });
       }
     }
 
