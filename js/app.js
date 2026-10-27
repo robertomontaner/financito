@@ -791,6 +791,39 @@ function infLibro() {
   $('#more')?.addEventListener('click', () => { S.libroN += 60; infLibro(); });
 }
 
+// ---- tooltip con el asiento completo (las dos mitades: qué se mueve en balance y en PyG) ----
+const AREA = { dinero: 'Balance', bien: 'Balance', deuda: 'Balance', contable: 'Balance', gasto: 'PyG', ingreso: 'PyG' };
+const MOVE = { // [si va al debe, si va al haber]
+  dinero: ['entra dinero', 'sale dinero'], bien: ['sube su valor', 'baja su valor'], deuda: ['debes menos', 'debes más'],
+  gasto: ['gasto', 'devolución'], ingreso: ['ingreso que se anula', 'ingreso'], contable: ['debe', 'haber'],
+};
+const tipBtn = (r) => `<button type="button" class="tip-i" data-tip="${esc(r.asiento || r.id)}" aria-label="Ver asiento completo">i</button>`;
+function asientoTip(key) {
+  const L = S.libro; const rs = L.activeRows.filter((r) => (r.asiento || r.id) === key); if (!rs.length) return '';
+  const part = (code, side, imp) => { const kk = L.kind(code); const ar = AREA[kk] || 'Balance';
+    return `<div class="tip-row"><span class="tip-side">${side === 'd' ? 'Debe' : 'Haber'}</span><span class="tip-acc">${emojiFor(L.byCode[code])} ${esc(L.nombre(code))}<small><span class="chip area-${ar === 'PyG' ? 'pyg' : 'bal'}">${ar}</span> ${esc((MOVE[kk] || MOVE.contable)[side === 'd' ? 0 : 1])}</small></span><span class="tip-amt">${fmt(imp)}</span></div>`; };
+  return `<div class="tip-head"><strong>${esc(rs[0].concepto || 'Apunte')}</strong><span class="muted">${esc(shortDate(rs[0].fecha))}</span></div>
+    ${rs.map((r) => part(r.debe, 'd', r.importe)).join('')}${rs.map((r) => part(r.haber, 'h', r.importe)).join('')}
+    <div class="tip-foot">Debe ${fmt(rs.reduce((a, r) => a + r.importe, 0))} = Haber ${fmt(rs.reduce((a, r) => a + r.importe, 0))} ✓</div>`;
+}
+function bindTips(root) {
+  let tip = $('#tip'); if (!tip) { tip = document.createElement('div'); tip.id = 'tip'; tip.className = 'tip'; tip.hidden = true; document.body.appendChild(tip); }
+  const show = (btn) => {
+    tip.innerHTML = asientoTip(btn.dataset.tip); tip.hidden = false; tip.dataset.for = btn.dataset.tip;
+    const b = btn.getBoundingClientRect(); const w = Math.min(320, innerWidth - 24); tip.style.width = `${w}px`;
+    const x = Math.max(12, Math.min(b.left + b.width / 2 - w / 2, innerWidth - w - 12));
+    const hgt = tip.offsetHeight; const y = b.bottom + 8 + hgt > innerHeight ? b.top - hgt - 8 : b.bottom + 8;
+    tip.style.left = `${x}px`; tip.style.top = `${Math.max(8, y)}px`;
+  };
+  const hide = () => { tip.hidden = true; tip.dataset.for = ''; };
+  const fine = matchMedia('(hover: hover)').matches;
+  $$('[data-tip]', root).forEach((btn) => {
+    if (fine) { btn.addEventListener('mouseenter', () => show(btn)); btn.addEventListener('mouseleave', hide); }
+    btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (!tip.hidden && tip.dataset.for === btn.dataset.tip) hide(); else show(btn); });
+  });
+  if (!window.__tipDoc) { window.__tipDoc = true; document.addEventListener('click', () => { $('#tip') && ($('#tip').hidden = true); }); addEventListener('scroll', () => { $('#tip') && ($('#tip').hidden = true); }, { passive: true }); addEventListener('hashchange', () => { $('#tip') && ($('#tip').hidden = true); }); }
+}
+
 function infMayor() {
   const L = S.libro; const [from, to] = periodRange();
   if (S.mayorCuenta) return mayorCuenta(S.mayorCuenta);
@@ -804,7 +837,7 @@ function infMayor() {
   let body = '';
   if (S.mayorVista === 't') {
     const key = (r) => esc(r.asiento || r.id);
-    const line = (r, side) => `<div class="tl" data-as="${key(r)}"><span class="tl-c">${esc(r.concepto || '')}</span><span class="tl-v">${fmt(r.importe)}</span><span class="tl-o">${side === 'd' ? '←' : '→'} ${esc(L.nombre(side === 'd' ? r.haber : r.debe))}</span></div>`;
+    const line = (r, side) => `<div class="tl" data-as="${key(r)}"><span class="tl-c">${esc(r.concepto || '')}</span><span class="tl-v">${fmt(r.importe)}${tipBtn(r)}</span><span class="tl-o">${side === 'd' ? '←' : '→'} ${esc(L.nombre(side === 'd' ? r.haber : r.debe))}</span></div>`;
     const MAX = 6;
     const tCard = (c) => {
       const { d, h } = sums[c]; const sd = round2(d.reduce((s, r) => s + r.importe, 0)); const sh = round2(h.reduce((s, r) => s + r.importe, 0));
@@ -838,6 +871,7 @@ function infMayor() {
   $('#inf input[name=cuenta]').addEventListener('change', (e) => { S.mayorCuenta = e.target.value; infMayor(); });
   $$('#inf [data-mv]').forEach((b) => { b.onclick = () => { S.mayorVista = b.dataset.mv; infMayor(); }; });
   $$('#inf tr[data-acc], #inf [data-open]').forEach((el) => { el.onclick = () => { S.mayorCuenta = el.dataset.acc || el.dataset.open; infMayor(); scrollTo(0, 0); }; });
+  bindTips($('#inf'));
   // tocar un apunte ilumina sus dos mitades (debe de una cuenta, haber de otra)
   $$('#inf .tl').forEach((el) => {
     el.onclick = () => {
@@ -865,27 +899,19 @@ function mayorCuenta(code) {
   let saldo = ini; const d = rows.filter((r) => r.debe === code); const h = rows.filter((r) => r.haber === code);
   const sd = round2(d.reduce((s, r) => s + r.importe, 0)); const sh = round2(h.reduce((s, r) => s + r.importe, 0));
   const fin = round2(ini + (dn ? sd - sh : sh - sd));
-  const tLine = (r, side) => `<div class="t-line tap" data-id="${esc(r.id)}"><span class="t-date">${esc(shortDate(r.fecha))}</span><span class="t-desc">${esc(r.concepto || '')}<small><a href="#" class="t-go" data-go="${esc(side === 'd' ? r.haber : r.debe)}">${esc(L.nombre(side === 'd' ? r.haber : r.debe))}</a></small></span><span class="t-amt">${fmt(r.importe)}</span></div>`;
-  // la otra mitad del apunte (la cuenta que se mueve en sentido contrario), en gris y sin sumar
-  const VERB = { dinero: ['entra en', 'sale de'], deuda: ['devuelves a', 'debes más a'], gasto: ['gasto en', 'gasto en'], ingreso: ['ingreso de', 'ingreso de'], bien: ['compras', 'vendes'] };
-  const ghost = (r, side) => { const oc = side === 'd' ? r.haber : r.debe; const ok = L.kind(oc); const verb = (VERB[ok] || ['contrapartida', 'contrapartida'])[side === 'd' ? 1 : 0];
-    return `<a href="#" class="t-ghost" data-go="${esc(oc)}"><span class="t-gv">${esc(verb)}</span><span class="t-gn">${emojiFor(L.byCode[oc])} ${esc(L.nombre(oc))}</span><span class="t-ga">${fmt(r.importe)}</span></a>`; };
-  const other = (k === 'gasto' ? 'Cada gasto va al <strong>debe</strong> de su categoría y, a la vez, al <strong>haber del banco</strong> con el que pagaste (el dinero sale de ahí). En gris ves esa otra mitad: no suma en esta cuenta, suma en la T del banco. Tócala para ir allí.'
-    : k === 'ingreso' ? 'Cada ingreso va al <strong>haber</strong> de su tipo y, a la vez, al <strong>debe del banco</strong> donde entró el dinero. En gris ves esa otra mitad: no suma aquí, suma en la T del banco. Tócala para ir allí.'
-    : k === 'dinero' ? 'En un banco el <strong>debe</strong> es lo que entra (ingresos, traspasos recibidos) y el <strong>haber</strong> lo que sale (gastos, traspasos enviados). Toca la cuenta en gris para ir a la otra mitad del apunte.' : '');
+  const tLine = (r) => `<div class="t-line tap" data-id="${esc(r.id)}"><span class="t-date">${esc(shortDate(r.fecha))}</span><span class="t-desc">${esc(r.concepto || '')}</span><span class="t-amt">${fmt(r.importe)}</span>${tipBtn(r)}</div>`;
+  const area = AREA[k] || 'Balance';
+  const other = k === 'gasto' ? 'Solo los movimientos reales de esta cuenta. Pasa el ratón (o toca) por <span class="tip-i">i</span> para ver el asiento completo: de qué banco salió el dinero.'
+    : k === 'ingreso' ? 'Solo los movimientos reales de esta cuenta. Pasa el ratón (o toca) por <span class="tip-i">i</span> para ver en qué banco entró el dinero.'
+    : k === 'dinero' ? 'En un banco el <strong>debe</strong> es lo que entra y el <strong>haber</strong> lo que sale. Pasa el ratón (o toca) por <span class="tip-i">i</span> para ver a qué gasto, ingreso o cuenta va cada movimiento.' : '';
   $('#inf').innerHTML = `${periodBar(() => mayorCuenta(code))}
     <div class="row between" style="margin-bottom:8px"><button class="btn sm" id="back">‹ Todas las cuentas</button><span class="chip">${esc(c ? KIND_LABEL[kindOf(c)] : L.tipo(code))}</span></div>
     <div class="taccount">
-      <div class="t-title"><span class="pk-ic">${emojiFor(c)}</span><div><div class="t-name">${esc(L.nombre(code))}</div><div class="small muted">Cuenta ${esc(code)} · ${pyg ? 'acumulado del año antes de este periodo' : 'saldo inicial'} ${eur(ini)}</div></div></div>
-      <div class="t-grid ${S.verMitad === false ? '' : 'ghosts'}">
-        <div class="t-cell l t-h">Debe <small>${dn ? 'suma' : 'resta'}</small></div><div class="t-cell t-h">Haber <small>${dn ? 'resta' : 'suma'}</small></div>
-        ${rows.map((r) => { const side = r.debe === code ? 'd' : 'h'; const real = tLine(r, side); const gh = S.verMitad === false ? '' : ghost(r, side); return side === 'd' ? `<div class="t-cell l">${real}</div><div class="t-cell">${gh}</div>` : `<div class="t-cell l">${gh}</div><div class="t-cell">${real}</div>`; }).join('') || '<div class="t-cell l"><div class="t-empty">—</div></div><div class="t-cell"><div class="t-empty">—</div></div>'}
-        <div class="t-cell l"><div class="t-sum">${fmt(sd)}</div></div><div class="t-cell"><div class="t-sum">${fmt(sh)}</div></div>
-        ${S.verMitad === false ? '' : `<div class="t-cell l"><div class="t-gsum"><span>+ en gris</span>${fmt(sh)}</div></div><div class="t-cell"><div class="t-gsum"><span>+ en gris</span>${fmt(sd)}</div></div>
-        <div class="t-cell l"><div class="t-cuadre"><span>Debe total</span>${fmt(sd + sh)}</div></div><div class="t-cell"><div class="t-cuadre"><span>Haber total</span><span class="t-ok">${fmt(sd + sh)} <b class="pos">✓</b></span></div></div>`}
+      <div class="t-title"><span class="pk-ic">${emojiFor(c)}</span><div class="grow"><div class="t-name">${esc(L.nombre(code))} <span class="chip area-${area === 'PyG' ? 'pyg' : 'bal'}">${area}</span></div><div class="small muted">Cuenta ${esc(code)} · ${pyg ? 'acumulado del año antes de este periodo' : 'saldo inicial'} ${eur(ini)}</div></div></div>
+      <div class="t-cols">
+        <div class="t-col"><div class="t-h">Debe <small>${dn ? 'suma' : 'resta'}</small></div>${d.map(tLine).join('') || '<div class="t-empty">—</div>'}<div class="t-sum">${fmt(sd)}</div></div>
+        <div class="t-col"><div class="t-h">Haber <small>${dn ? 'resta' : 'suma'}</small></div>${h.map(tLine).join('') || '<div class="t-empty">—</div>'}<div class="t-sum">${fmt(sh)}</div></div>
       </div>
-      ${S.verMitad === false ? '' : `<p class="small muted" style="margin:6px 2px 0">Con la otra mitad, debe y haber suman lo mismo (${eur(sd + sh)}): cada euro que entra en una cuenta sale de otra. El <strong>${pyg ? 'acumulado' : 'saldo'}</strong> de esta cuenta solo cuenta lo negro.</p>`}
-      <div class="row between" style="margin-top:8px"><button class="btn sm" id="mitad">${S.verMitad === false ? 'Ver la otra mitad de cada apunte' : 'Ocultar la otra mitad'}</button></div>
       <div class="t-saldo">${pyg ? 'Acumulado' : 'Saldo final'} <strong class="${cls(fin)}">${eur(fin)}</strong></div>
     </div>
     ${other ? `<p class="small muted" style="margin:8px 2px">${other}</p>` : ''}
@@ -895,8 +921,8 @@ function mayorCuenta(code) {
       ${rows.map((r) => { saldo = round2(saldo + sign(r)); return `<tr class="tap" data-id="${esc(r.id)}"><td>${esc(shortDate(r.fecha))}</td><td>${esc(r.concepto || '')} <span class="muted">· <a href="#" class="t-go" data-go="${esc(r.debe === code ? r.haber : r.debe)}">${esc(L.nombre(r.debe === code ? r.haber : r.debe))}</a></span></td><td class="n">${r.debe === code ? fmt(r.importe) : ''}</td><td class="n">${r.haber === code ? fmt(r.importe) : ''}</td><td class="n">${fmt(saldo)}</td></tr>`; }).join('')}
     </table></div>`;
   $('#back').onclick = () => { S.mayorCuenta = ''; infMayor(); };
-  $('#mitad').onclick = () => { S.verMitad = S.verMitad === false; mayorCuenta(code); };
   $$('#inf [data-id]').forEach((el) => { el.onclick = () => editEntry(el.dataset.id); });
+  bindTips($('#inf'));
   $$('#inf [data-go]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); S.mayorCuenta = a.dataset.go; mayorCuenta(a.dataset.go); scrollTo(0, 0); }; });
 }
 
