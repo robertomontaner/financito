@@ -996,11 +996,15 @@ async function infGraficos() {
   const data = showMonths.map((m) => L.gastoMes(m));
   const cats = [...new Set(data.flatMap((d) => Object.keys(d.porCuenta)))].sort();
   const mesSel = isMes ? S.mes : (showMonths[showMonths.length - 1] || cur);
-  $('#inf').innerHTML = `${periodBar(infGraficos)}
+  const gtabs = `<div class="seg" style="margin-bottom:12px"><button data-g="general" class="${S.grafTab !== 'imp' ? 'on' : ''}">General</button><button data-g="imp" class="${S.grafTab === 'imp' ? 'on' : ''}">Imprevistos</button></div>`;
+  const bindG = () => $$('#inf [data-g]').forEach((b) => { b.onclick = () => { S.grafTab = b.dataset.g; infGraficos(); }; });
+  if (S.grafTab === 'imp') return graficosImprevistos({ year, isMes, showMonths, gtabs, bindG });
+  $('#inf').innerHTML = `${periodBar(infGraficos)}${gtabs}
     <div class="card"><h3>En qué se fue ${esc(mesLargo(mesSel))}</h3><div class="chartbox"><canvas id="c2"></canvas></div><p class="small muted">Incluye imprevistos.</p></div>
     <div class="card"><h3>Gasto corriente por mes · ${year}</h3><div class="chartbox"><canvas id="c1"></canvas></div><p class="small muted">Sin imprevistos ni amortizaciones.</p></div>
     <div class="card"><h3>Ingresos vs gastos · ${year}</h3><div class="chartbox"><canvas id="c3"></canvas></div></div>
     ${L.inicio ? `<div class="card"><h3>Patrimonio neto · ${year}</h3><div class="chartbox"><canvas id="c4"></canvas></div></div>` : ''}`;
+  bindG();
   let Chart;
   try { Chart = await loadChart(); } catch { $('#inf').insertAdjacentHTML('afterbegin', '<div class="banner warn">No se pudo cargar la librería de gráficos (¿sin conexión?).</div>'); return; }
   const dark = matchMedia('(prefers-color-scheme: dark)').matches;
@@ -1020,6 +1024,47 @@ async function infGraficos() {
     const pm = showMonths.filter((m) => m >= ym(L.inicio));
     S.charts.push(new Chart($('#c4'), { type: 'line', data: { labels: pm.map((m) => MESES[Number(m.slice(5)) - 1]), datasets: [{ label: 'Patrimonio neto', data: pm.map((m) => L.balance(m).patrimonioNeto), borderColor: '#3a78c2', backgroundColor: 'rgba(58,120,194,.12)', fill: true, tension: 0.25, pointRadius: 3 }] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: money }, scales: { x: { grid: { display: false } }, y: axis } } }));
   }
+}
+
+async function chartReady() {
+  const Chart = await loadChart();
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  Chart.defaults.color = dark ? '#94a096' : '#667066'; Chart.defaults.borderColor = dark ? '#2b332e' : '#e3e7e0'; Chart.defaults.font.family = 'system-ui, sans-serif';
+  S.charts?.forEach((c) => c.destroy()); S.charts = [];
+  return Chart;
+}
+async function graficosImprevistos({ year, isMes, showMonths, gtabs, bindG }) {
+  const L = S.libro;
+  const esImp = (r) => r.clase === 'imprevisto' && L.tipo(r.debe) === 'gasto';
+  const imps = L.activeRows.filter((r) => esImp(r) && r.fecha.startsWith(String(year))).sort((a, b) => b.fecha.localeCompare(a.fecha));
+  const p = L.pyg(year);
+  const porMes = showMonths.map((m) => round2(imps.filter((r) => ym(r.fecha) === m).reduce((a, r) => a + r.importe, 0)));
+  const totAno = round2(imps.reduce((a, r) => a + r.importe, 0));
+  const gastoAno = round2(p.totalGastos.reduce((a, v) => a + v, 0));
+  const media = showMonths.length ? totAno / showMonths.length : 0;
+  const lista = isMes ? imps.filter((r) => ym(r.fecha) === S.mes) : imps;
+  const totLista = round2(lista.reduce((a, r) => a + r.importe, 0));
+  const porCat = {}; imps.forEach((r) => { porCat[r.debe] = (porCat[r.debe] || 0) + r.importe; });
+  const cats = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
+  const fondo = L.fondo && L.byCode[L.fondo] && L.inicio ? L.balanceToDate(L.fondo) : null;
+  $('#inf').innerHTML = `${periodBar(infGraficos)}${gtabs}
+    <div class="kpis duo" style="margin-bottom:10px">
+      <div class="kpi"><div class="lbl">Imprevistos ${year}</div><div class="val">${eur(totAno, 0)}</div><div class="sub">${gastoAno ? `${fmt((totAno / gastoAno) * 100, 0)} % de todo tu gasto` : '—'}</div></div>
+      <div class="kpi"><div class="lbl">Media al mes</div><div class="val">${eur(media, 0)}</div><div class="sub">${fondo !== null ? `en ${esc(L.nombre(L.fondo))}: ${eur(fondo, 0)}` : 'lo que conviene apartar'}</div></div>
+    </div>
+    ${imps.length ? `<div class="card"><h3>Imprevistos por mes · ${year}</h3><div class="chartbox"><canvas id="ci1"></canvas></div></div>
+    <div class="card"><h3>En qué · ${year}</h3><div class="chartbox"><canvas id="ci2"></canvas></div></div>` : ''}
+    <div class="card"><div class="row between"><h3 style="margin:0">${isMes ? esc(mesLargo(S.mes)) : `Todo ${year}`}</h3><strong>${eur(totLista)}</strong></div>
+      <ul class="list">${lista.map((r) => `<li class="tap" data-id="${esc(r.id)}"><span class="pk-ic">${emojiFor(L.byCode[r.debe])}</span><div class="grow"><div class="t">${esc(r.concepto || '(sin concepto)')}</div><div class="s">${esc(shortDate(r.fecha))} · ${esc(L.nombre(r.debe))} · ${esc(L.nombre(r.haber))}</div></div><div class="amount">${eur(r.importe)}</div></li>`).join('') || `<li class="muted">Ningún imprevisto ${isMes ? 'este mes' : 'este año'}. 🎉</li>`}</ul></div>
+    <p class="small muted">Son los gastos que marcas como «Imprevisto» al apuntarlos. Sí cuentan en la PyG (en su propio bloque), pero no en el «gasto corriente» ni en los límites por categoría, para que no te distorsionen la media.</p>`;
+  bindG();
+  $$('#inf li[data-id]').forEach((li) => { li.onclick = () => editEntry(li.dataset.id); });
+  if (!imps.length) return;
+  let Chart; try { Chart = await chartReady(); } catch { $('#inf').insertAdjacentHTML('afterbegin', '<div class="banner warn">No se pudo cargar la librería de gráficos (¿sin conexión?).</div>'); return; }
+  const money = { callbacks: { label: (c) => `${c.dataset.label || c.label}: ${eur(c.parsed.y ?? c.parsed)}` } };
+  const labels = showMonths.map((m) => MESES[Number(m.slice(5)) - 1]);
+  S.charts.push(new Chart($('#ci1'), { type: 'bar', data: { labels, datasets: [{ label: 'Imprevistos', data: porMes, backgroundColor: showMonths.map((m) => (isMes && m === S.mes ? '#c2553a' : '#d08a2e')), borderRadius: 3 }, { type: 'line', label: 'Media', data: showMonths.map(() => round2(media)), borderColor: '#667066', borderDash: [4, 4], pointRadius: 0, borderWidth: 1.5 }] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: money }, scales: { x: { grid: { display: false } }, y: { ticks: { callback: (v) => `${fmt(v, 0)} €` } } } } }));
+  S.charts.push(new Chart($('#ci2'), { type: 'doughnut', data: { labels: cats.map(([c]) => L.nombre(c)), datasets: [{ data: cats.map(([, v]) => v), backgroundColor: cats.map((_, i) => PALETTE[i % PALETTE.length]), borderWidth: 0 }] }, options: { maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'right', labels: { boxWidth: 10 } }, tooltip: { callbacks: { label: (c) => `${c.label}: ${eur(c.parsed)}` } } } } }));
 }
 
 // ---------- presupuesto ----------
