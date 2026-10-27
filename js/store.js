@@ -21,6 +21,8 @@ export const auth = {
     if (!CONFIG.GOOGLE_CLIENT_ID) throw new Error('Falta configurar el ID de cliente de Google en js/config.js');
     const state = uid();
     LS.set('oauth_state', state);
+    // al volver de Google, regresa a la misma pantalla
+    if (/^#\/[a-z]/.test(location.hash)) LS.set('return_hash', location.hash);
     const params = new URLSearchParams({
       client_id: CONFIG.GOOGLE_CLIENT_ID,
       redirect_uri: this.redirectUri(),
@@ -38,7 +40,8 @@ export const auth = {
     const h = location.hash;
     if (!h || !(h.includes('access_token=') || h.includes('error='))) return null;
     const p = new URLSearchParams(h.slice(1));
-    history.replaceState(null, '', location.pathname + location.search + '#/inicio');
+    const back = LS.get('return_hash') || '#/inicio'; LS.del('return_hash');
+    history.replaceState(null, '', location.pathname + location.search + back);
     if (p.get('state') !== LS.get('oauth_state')) return { error: 'state' };
     LS.del('oauth_state');
     if (p.get('error')) return { error: p.get('error') };
@@ -47,6 +50,7 @@ export const auth = {
     LS.set('was_logged', '1');
     return { ok: true };
   },
+  expiresIn() { return Number(LS.get('token_exp') || 0) - Date.now(); },
   token() {
     const t = LS.get('token'); const exp = Number(LS.get('token_exp') || 0);
     return t && Date.now() < exp ? t : null;

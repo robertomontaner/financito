@@ -269,8 +269,26 @@ async function start() {
     await reload({ automations: true });
     $('#nav').hidden = false;
     window.addEventListener('hashchange', render);
+    if (S.store.kind !== 'demo') keepSession();
     if (!location.hash || location.hash === '#') location.hash = '#/inicio'; else render();
   } catch (e) { fail(e); }
+}
+
+// ---- sesión recordada ----
+// Google da tokens de 1 hora. Mientras tu cuenta de Google siga abierta en el navegador,
+// Financito pide uno nuevo sin preguntarte (prompt=none): un parpadeo de un segundo y sigues en la misma pantalla.
+function keepSession() {
+  // recuerda con qué cuenta entras, para que la renovación silenciosa no dude entre varias cuentas de Google
+  if (!LS.get('login_hint')) S.store.api('https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)').then((r) => r?.user?.emailAddress && LS.set('login_hint', r.user.emailAddress)).catch(() => {});
+  const busy = () => $('#modal-root')?.children.length || $('#picker-root')?.children.length || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || location.hash.startsWith('#/apuntar');
+  const check = () => {
+    if (LS.get('mode') !== 'google') return;
+    const left = auth.expiresIn();
+    // renueva al volver a la app con el token caducado, o justo antes de caducar si no estás escribiendo nada
+    if (left < 5 * 60e3 && !busy()) auth.login('none');
+  };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+  setInterval(() => { if (!document.hidden) check(); }, 60e3);
 }
 
 function renderLogin() {
@@ -308,7 +326,7 @@ function renderCreate() {
 }
 
 function renderReconnect() {
-  openModal(`<h2>Sesión caducada</h2><p class="muted">Google cierra la sesión cada hora por seguridad. Vuelve a entrar para seguir; no perderás nada guardado.</p>
+  openModal(`<h2>Sesión caducada</h2><p class="muted">Google renueva el acceso cada hora por seguridad. Pulsa para renovarlo (normalmente no te pide nada) y vuelves a esta misma pantalla. Lo ya guardado no se pierde.</p>
     <div class="actions"><button class="btn primary" id="re">Volver a entrar</button></div>`, (m) => {
     $('#re', m).onclick = () => auth.login('none');
   });
@@ -738,12 +756,13 @@ function viewDiario() {
 }
 
 // ---------------- INFORMES ----------------
-const INFORMES = [['libro', 'Libro diario'], ['mayor', 'Libro mayor'], ['pyg', 'PyG'], ['balance', 'Balance'], ['cuadre', 'Bancos']];
+const INFORMES = [['libro', 'Libro diario'], ['mayor', 'Libro mayor'], ['pyg', 'PyG'], ['balance', 'Balance'], ['cuadre', 'Bancos'], ['reporte', 'Reporte']];
 const INF_HELP = {
   libro: ['Libro diario', 'Todos los asientos en orden de fecha. Cada uno dice qué cuenta recibe (debe) y cuál entrega (haber). Debe y haber siempre suman lo mismo.'],
   mayor: ['Libro mayor', 'Los mismos asientos, pero ordenados por cuenta: cada cuenta es una «T» con el debe a la izquierda y el haber a la derecha. Cada movimiento aparece dos veces: en el debe de una cuenta y en el haber de otra. Toca un apunte para ver sus dos mitades iluminadas.'],
   pyg: ['PyG · ¿cuánto ahorro?', 'Solo cuentas de gasto (6) e ingreso (7). Ingresos − gastos = ahorro. Los traspasos y el reparto no aparecen: solo mueven dinero entre tus cuentas.'],
   balance: ['Balance · ¿cuánto tengo?', 'Lo que tienes (bancos, inversiones, bienes) y lo que debes, a final de mes. Sube cada mes lo que ahorras.'],
+  reporte: ['Reporte mensual', 'Un resumen ejecutivo del mes en dos páginas: ahorro, gastos frente a tu media, plan, balance y evolución. Para imprimir o guardar como PDF.'],
   cuadre: ['Cierre de saldos', 'Escribes lo que dice cada banco y Financito apunta una corrección donde no cuadre (céntimos, gastos olvidados).'],
 };
 function viewInformes() {
@@ -755,7 +774,7 @@ function viewInformes() {
       <p class="small muted">La pestaña <strong>Mes</strong> es la de caja: el reparto solo pasa dinero de ${esc(S.libro.principal ? S.libro.nombre(S.libro.principal) : 'tu cuenta principal')} a otras cuentas (traspasos), así que cambia el balance de cada cuenta pero no la PyG.</p></details>
     <div id="inf" style="margin-top:12px"></div>`;
   $$('.seg button[data-i]').forEach((b) => { b.onclick = () => { S.informe = b.dataset.i; viewInformes(); }; });
-  ({ libro: infLibro, mayor: infMayor, pyg: infPyG, balance: infBalance, cuadre: infCuadre })[S.informe]();
+  ({ libro: infLibro, mayor: infMayor, pyg: infPyG, balance: infBalance, cuadre: infCuadre, reporte: infReporte })[S.informe]();
 }
 
 // rango del periodo elegido
@@ -1103,7 +1122,7 @@ const RANGOS = [
   ['7d', '7 días'], ['semana', 'Esta semana'], ['mes', 'Este mes'], ['mespasado', 'Mes pasado'], ['30d', '30 días'],
   ['trim', 'Trimestre'], ['3m', '3 meses'], ['ano', 'Este año'], ['12m', '12 meses'], ['todo', 'Todo'], ['custom', 'Elegir fechas'],
 ];
-S.g ??= { r: 'mes', off: 0, from: '', to: '', cat: '', banco: '', imp: true };
+S.g ??= { r: 'mes', off: 0, from: '', to: '', cat: '', banco: '', imp: false };
 
 // rango [from, to] del preset con desplazamiento (‹ ›)
 function gRange() {
@@ -1143,7 +1162,6 @@ function gMovs(from, to) {
     const td = L.tipo(r.debe); const th = L.tipo(r.haber); const imp = r.clase === 'imprevisto';
     if (td === 'gasto' || th === 'gasto') {
       const sign = td === 'gasto' ? 1 : -1; const code = td === 'gasto' ? r.debe : r.haber; const banco = bankOf(td === 'gasto' ? r.haber : r.debe);
-      if (!g.imp && imp) continue;
       if (g.cat && code !== g.cat) continue;
       if (g.banco && banco !== g.banco) continue;
       gastos.push({ r, code, banco, v: sign * r.importe, bloque: L.bloque(code, imp), imp });
@@ -1194,14 +1212,16 @@ async function viewGraficos() {
   const [from, to] = gRange(); const n = daysBetween(from, to);
   const pFrom = addDays(from, -n); const pTo = addDays(from, -1);
   const cur = gMovs(from, to); const prev = gMovs(pFrom, pTo);
+  const impAll = cur.gastos.filter((x) => x.imp);
+  if (!g.imp) { cur.gastos = cur.gastos.filter((x) => !x.imp); prev.gastos = prev.gastos.filter((x) => !x.imp); }
   const G = sumV(cur.gastos); const I = sumV(cur.ingresos); const A = round2(I - G);
   const Gp = sumV(prev.gastos); const Ip = sumV(prev.ingresos);
   const hoy = todayISO(); const diasTrans = Math.max(1, daysBetween(from, to < hoy ? to : hoy));
   const porCat = Object.entries(groupSum(cur.gastos, 'code')).filter(([, v]) => v > 0.004).sort((a, b) => b[1] - a[1]);
   const porBanco = Object.entries(groupSum(cur.gastos, 'banco')).filter(([, v]) => v > 0.004).sort((a, b) => b[1] - a[1]);
-  const imps = cur.gastos.filter((x) => x.imp).sort((a, b) => b.r.fecha.localeCompare(a.r.fecha));
+  const imps = impAll.sort((a, b) => b.r.fecha.localeCompare(a.r.fecha));
   const top = [...cur.gastos].sort((a, b) => b.v - a.v).slice(0, 8);
-  const filtros = [g.cat && `Categoría: ${L.nombre(g.cat)}`, g.banco && `Pagado con: ${L.nombre(g.banco)}`, !g.imp && 'Sin imprevistos'].filter(Boolean);
+  const filtros = [g.cat && `Categoría: ${L.nombre(g.cat)}`, g.banco && `Pagado con: ${L.nombre(g.banco)}`, g.imp && 'Con imprevistos'].filter(Boolean);
   const steppable = !['todo', 'custom'].includes(g.r);
   const rangoBtns = RANGOS.map(([k, l]) => `<button class="gchip ${g.r === k ? 'on' : ''}" data-r="${k}">${l}</button>`).join('');
   const pickBtn = (key, label, val) => `<button class="gchip sel ${val ? 'on' : ''}" data-pick="${key}">${esc(val ? L.nombre(val) : label)} ▾</button>`;
@@ -1215,7 +1235,7 @@ async function viewGraficos() {
       </div>
       ${g.r === 'custom' ? `<div class="two"><div class="field"><label class="lbl">Desde</label><input type="date" id="gf" value="${esc(from)}"></div><div class="field"><label class="lbl">Hasta</label><input type="date" id="gt" value="${esc(to)}"></div></div>` : ''}
       <div class="gchips">${pickBtn('cat', 'Todas las categorías', g.cat)}${pickBtn('banco', 'Todos los bancos', g.banco)}
-        <button class="gchip ${g.imp ? '' : 'on'}" data-imp>${g.imp ? 'Con imprevistos' : 'Sin imprevistos'}</button>
+        <button class="gchip sel ${g.imp ? 'on' : ''}" data-imp aria-pressed="${g.imp}">${g.imp ? '✓ ' : ''}Con imprevistos</button>
         ${filtros.length ? '<button class="gchip clear" data-clear>✕ Quitar filtros</button>' : ''}</div>
     </div>
 
@@ -1235,8 +1255,8 @@ async function viewGraficos() {
       <div class="card"><h3>Qué día gastas más</h3><div class="chartbox sm"><canvas id="g4"></canvas></div><p class="small muted" style="margin-bottom:0">Media por día de la semana.</p></div>
       <div class="card"><h3>Gastos más grandes</h3><ul class="list">${top.map((x) => `<li class="tap" data-id="${esc(x.r.id)}"><span class="pk-ic">${emojiFor(L.byCode[x.code])}</span><div class="grow"><div class="t">${esc(x.r.concepto || L.nombre(x.code))}${x.imp ? ' <span class="chip imprevisto">imprevisto</span>' : ''}</div><div class="s">${esc(shortDate(x.r.fecha))} · ${esc(L.nombre(x.code))}</div></div><div class="amount">${eur(x.v)}</div></li>`).join('') || '<li class="muted">—</li>'}</ul></div>
       <div class="card"><div class="row between"><h3>Imprevistos</h3><strong>${eur(sumV(imps))}</strong></div>
-        <p class="small muted" style="margin-top:0">${G ? `${fmt((sumV(imps) / G) * 100, 0)} % del gasto del periodo` : ''}${L.fondo && L.inicio ? ` · en ${esc(L.nombre(L.fondo))}: ${eur(L.balanceToDate(L.fondo), 0)}` : ''}</p>
-        <ul class="list">${imps.slice(0, 8).map((x) => `<li class="tap" data-id="${esc(x.r.id)}"><span class="pk-ic">${emojiFor(L.byCode[x.code])}</span><div class="grow"><div class="t">${esc(x.r.concepto || '')}</div><div class="s">${esc(shortDate(x.r.fecha))} · ${esc(L.nombre(x.code))}</div></div><div class="amount">${eur(x.v)}</div></li>`).join('') || `<li class="muted">${g.imp ? 'Ninguno en este periodo 🎉' : 'Ocultos por el filtro'}</li>`}</ul></div>
+        <p class="small muted" style="margin-top:0">${g.imp ? '' : 'No cuentan en el resto de la página (activa «Con imprevistos» para sumarlos)'}${g.imp && G ? `${fmt((sumV(imps) / G) * 100, 0)} % del gasto del periodo` : ''}${L.fondo && L.inicio ? ` · en ${esc(L.nombre(L.fondo))}: ${eur(L.balanceToDate(L.fondo), 0)}` : ''}</p>
+        <ul class="list">${imps.slice(0, 8).map((x) => `<li class="tap" data-id="${esc(x.r.id)}"><span class="pk-ic">${emojiFor(L.byCode[x.code])}</span><div class="grow"><div class="t">${esc(x.r.concepto || '')}</div><div class="s">${esc(shortDate(x.r.fecha))} · ${esc(L.nombre(x.code))}</div></div><div class="amount">${eur(x.v)}</div></li>`).join('') || `<li class="muted">Ninguno en este periodo 🎉</li>`}</ul></div>
       ${L.inicio && n > 45 ? '<div class="card span2"><h3>Patrimonio neto</h3><div class="chartbox sm"><canvas id="g5"></canvas></div></div>' : ''}
     </div>`;
 
@@ -1246,7 +1266,7 @@ async function viewGraficos() {
   $('#gf')?.addEventListener('change', (e) => { g.from = e.target.value; viewGraficos(); });
   $('#gt')?.addEventListener('change', (e) => { g.to = e.target.value; viewGraficos(); });
   $('[data-imp]').onclick = () => { g.imp = !g.imp; viewGraficos(); };
-  $('[data-clear]')?.addEventListener('click', () => { g.cat = ''; g.banco = ''; g.imp = true; viewGraficos(); });
+  $('[data-clear]')?.addEventListener('click', () => { g.cat = ''; g.banco = ''; g.imp = false; viewGraficos(); });
   $$('[data-pick]', view()).forEach((b) => {
     b.onclick = () => {
       const key = b.dataset.pick;
@@ -1287,6 +1307,115 @@ async function viewGraficos() {
     S.charts.push(new Chart($('#g5'), { type: 'line', data: { labels: ms.map((m) => `${MESES[Number(m.slice(5)) - 1]} ${m.slice(2, 4)}`), datasets: [{ label: 'Patrimonio neto', data: ms.map((m) => L.balance(m).patrimonioNeto), borderColor: S1[0], borderWidth: 2, tension: 0.25, pointRadius: 3, pointBackgroundColor: S1[0], pointBorderColor: v.surface, pointBorderWidth: 2 }] }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend: { display: false }, tooltip: money }, scales: { x: xAxis, y: yAxis } } }));
   }
 }
+
+// ================= REPORTE EJECUTIVO MENSUAL (2 páginas A4) =================
+async function infReporte() {
+  const L = S.libro; const m = S.mes; const prevM = addMonths(m, -1);
+  const hist = Array.from({ length: 12 }, (_, i) => addMonths(m, i - 12)); // 12 meses anteriores
+  const p = L.pygCols([{ from: m, to: m }, { from: prevM, to: prevM }, ...hist.map((x) => ({ from: x, to: x })), { from: `${m.slice(0, 4)}-01`, to: m }]);
+  const H = hist.map((_, i) => i + 2); const YTD = 14;
+  const conDatos = H.filter((i) => p.totalGastos[i] || p.totalIngresos[i]);
+  const avg = (arr) => (conDatos.length ? conDatos.reduce((s, i) => s + arr[i], 0) / conDatos.length : 0);
+  const I = p.totalIngresos[0]; const G = p.totalGastos[0]; const A = p.resultado[0]; const imp = p.imprevistos[0];
+  const tasa = I ? A / I : 0; const tasaMed = (() => { const ti = conDatos.reduce((s, i) => s + p.totalIngresos[i], 0); const ta = conDatos.reduce((s, i) => s + p.resultado[i], 0); return ti ? ta / ti : 0; })();
+  const balOk = !!L.inicio && ym(L.inicio) <= m;
+  const bal = balOk ? L.balance(m) : null; const balP = balOk && ym(L.inicio) <= prevM ? L.balance(prevM) : null;
+  const plan = L.planMes(m); const pres = L.presupuesto(m).filter((x) => L.kind(x.code) === 'gasto');
+  const BLQ = [['fijos', 'Fijos'], ['variables', 'Variables'], ['imprevistos', 'Imprevistos'], ['financieros', 'Hipoteca y otros']];
+  const blq = BLQ.map(([k, l]) => { const rs = p.gastos.filter((r) => r.bloque === k); const v = (i) => rs.reduce((s, r) => s + r.values[i], 0); return { k, l, v: round2(v(0)), med: round2(avg(H.reduce((o, i) => { o[i] = v(i); return o; }, []))) }; }).filter((b) => b.v || b.med);
+  // categorías (sin distinguir imprevisto) este mes vs media
+  const catMap = {}; p.gastos.forEach((r) => { const c = (catMap[r.code] ??= { code: r.code, nombre: r.nombre, vals: Array(p.cols.length).fill(0) }); r.values.forEach((v, i) => { c.vals[i] += v; }); });
+  const cats = Object.values(catMap).map((c) => ({ ...c, v: round2(c.vals[0]), med: round2(avg(c.vals)) })).filter((c) => c.v || c.med).sort((a, b) => b.v - a.v);
+  const movs = L.activeRows.filter((r) => ym(r.fecha) === m);
+  const grandes = movs.filter((r) => L.tipo(r.debe) === 'gasto').sort((a, b) => b.importe - a.importe).slice(0, 5);
+  const descuadre = round2(movs.reduce((s, r) => s + (r.debe === '659' ? r.importe : 0) - (r.haber === '759' ? r.importe : 0), 0));
+  const fondo = L.fondo && balOk ? L.balanceToDate(L.fondo) : null; const impMed = avg(p.imprevistos);
+  const pct = (a, b) => (b ? ((a - b) / Math.abs(b)) * 100 : null);
+  const vs = (a, b, goodUp, label) => { const d = pct(a, b); if (d === null || !isFinite(d)) return `<span class="muted">${label}: —</span>`; if (Math.abs(d) < 1) return `<span class="muted">= ${label}</span>`; const good = goodUp ? d > 0 : d < 0; return `<span class="${good ? 'pos' : 'neg'}">${d > 0 ? '▲' : '▼'} ${fmt(Math.abs(d), 0)} %</span> <span class="muted">${label}</span>`; };
+
+  // ---- lo destacado (frases automáticas) ----
+  const notas = [];
+  if (I) notas.push(`Has ahorrado <strong>${eur(A, 0)}</strong>, el <strong>${fmt(tasa * 100, 0)} %</strong> de lo que ha entrado${conDatos.length ? ` (tu media: ${fmt(tasaMed * 100, 0)} %)` : ''}.`);
+  else notas.push('No hay ingresos apuntados este mes: el ahorro no es representativo.');
+  const sube = cats.filter((c) => c.med > 20 && c.v > c.med * 1.2).sort((a, b) => (b.v - b.med) - (a.v - a.med))[0];
+  if (sube) notas.push(`<strong>${esc(sube.nombre)}</strong> está un ${fmt(pct(sube.v, sube.med), 0)} % por encima de tu media (${eur(sube.v, 0)} frente a ${eur(sube.med, 0)}).`);
+  const baja = cats.filter((c) => c.med > 20 && c.v < c.med * 0.8).sort((a, b) => (a.v - a.med) - (b.v - b.med))[0];
+  if (baja) notas.push(`<strong>${esc(baja.nombre)}</strong> baja un ${fmt(Math.abs(pct(baja.v, baja.med)), 0)} % respecto a tu media.`);
+  if (imp) notas.push(`Imprevistos: <strong>${eur(imp, 0)}</strong>${fondo !== null ? `; en tu fondo quedan ${eur(fondo, 0)}${impMed ? ` (≈ ${fmt(fondo / impMed, 0)} meses de imprevistos medios)` : ''}` : ''}.`);
+  const pasados = pres.filter((x) => x.real > x.asignado);
+  if (pres.length) notas.push(pasados.length ? `Límites superados: ${pasados.map((x) => `<strong>${esc(x.nombre)}</strong> (${eur(x.real - x.asignado, 0)} de más)`).join(', ')}.` : `Has respetado los ${pres.length} límites por categoría.`);
+  if (bal && balP) { const d = bal.patrimonioNeto - balP.patrimonioNeto; notas.push(`Tu patrimonio neto ${d >= 0 ? 'sube' : 'baja'} <strong>${eur(Math.abs(d), 0)}</strong> y queda en ${eur(bal.patrimonioNeto, 0)}.`); }
+  if (Math.abs(descuadre) >= 1) notas.push(`Correcciones del cierre de saldos: ${eur(descuadre, 0)} ${descuadre > 0 ? 'que se escaparon sin apuntar' : 'a tu favor'}.`);
+
+  const bar = (v, max, cls2 = '') => `<span class="r-track"><span class="r-fill ${cls2}" style="width:${max ? Math.max(1, Math.min(100, (v / max) * 100)) : 0}%"></span></span>`;
+  const maxB = Math.max(...blq.map((b) => Math.max(b.v, b.med)), 1);
+  const maxC = Math.max(...cats.slice(0, 8).map((c) => Math.max(c.v, c.med)), 1);
+  const grp = (list) => { const o = {}; list.forEach((x) => { const g = displayGroup(L.byCode[x.code]) || x.grupo; (o[g] ??= []).push(x); }); return o; };
+  const balRows = (list) => Object.entries(grp(list.filter((x) => Math.abs(x.saldo) > 0.5))).map(([g, l]) => `<tr class="r-g"><td>${esc(g)}</td><td class="n">${eur(l.reduce((s, x) => s + x.saldo, 0), 0)}</td></tr>${l.map((x) => `<tr><td class="r-ind">${esc(x.nombre)}</td><td class="n">${eur(x.saldo, 0)}</td></tr>`).join('')}`).join('');
+  const donde = balOk ? L.dondeAhorro(m) : [];
+  const titulo = mesLargo(m).replace(/^./, (c) => c.toUpperCase());
+
+  $('#inf').innerHTML = `${periodBar(infReporte, { allowYear: false })}
+    <div class="row between noprint" style="margin-bottom:12px;gap:8px;flex-wrap:wrap"><span class="small muted">Dos páginas A4 con lo esencial del mes. Imprímelo o guárdalo como PDF.</span><button class="btn primary" id="print">Imprimir / guardar PDF</button></div>
+    <div id="report">
+      <section class="r-page">
+        <header class="r-head"><div><div class="r-kicker">Financito · reporte mensual</div><h1>${esc(titulo)}</h1></div><div class="r-date">Generado el ${esc(new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }))}</div></header>
+        <div class="r-kpis">
+          <div class="r-kpi hero"><div class="lbl">Ahorro del mes</div><div class="val ${A < 0 ? 'neg' : ''}">${eur(A, 0)}</div><div class="sub">${I ? `${fmt(tasa * 100, 0)} % de los ingresos` : '—'}</div><div class="sub">${vs(A, p.resultado[1], true, 'vs mes anterior')}</div></div>
+          <div class="r-kpi"><div class="lbl">Ingresos</div><div class="val">${eur(I, 0)}</div><div class="sub">${vs(I, p.totalIngresos[1], true, 'vs mes ant.')}</div><div class="sub">${vs(I, avg(p.totalIngresos), true, 'vs media 12m')}</div></div>
+          <div class="r-kpi"><div class="lbl">Gastos</div><div class="val">${eur(G, 0)}</div><div class="sub">${vs(G, p.totalGastos[1], false, 'vs mes ant.')}</div><div class="sub">${vs(G, avg(p.totalGastos), false, 'vs media 12m')}</div></div>
+          <div class="r-kpi"><div class="lbl">Patrimonio neto</div><div class="val">${bal ? eur(bal.patrimonioNeto, 0) : '—'}</div><div class="sub">${bal && balP ? `${bal.patrimonioNeto - balP.patrimonioNeto >= 0 ? '+' : ''}${eur(bal.patrimonioNeto - balP.patrimonioNeto, 0)} en el mes` : bal ? 'fin de mes' : 'faltan saldos iniciales'}</div></div>
+        </div>
+        <div class="r-box"><h2>Lo destacado</h2><ul class="r-notes">${notas.map((n) => `<li>${n}</li>`).join('')}</ul></div>
+        <div class="r-cols">
+          <div class="r-box"><h2>Tipo de gasto</h2><table class="r-t"><tr><th></th><th></th><th class="n">Mes</th><th class="n">Media</th></tr>${blq.map((b) => `<tr><td>${esc(b.l)}</td><td class="r-bars">${bar(b.v, maxB)}${bar(b.med, maxB, 'med')}</td><td class="n"><strong>${eur(b.v, 0)}</strong></td><td class="n muted">${eur(b.med, 0)}</td></tr>`).join('')}</table><p class="r-leg"><span class="r-sw"></span> este mes <span class="r-sw med"></span> media 12 meses</p></div>
+          <div class="r-box"><h2>Plan del mes</h2>${plan.hasPlan ? `<table class="r-t">
+            <tr><td>Ingresos</td><td class="n muted">plan ${eur(plan.ingresosPlan, 0)}</td><td class="n"><strong>${eur(plan.ingresosReal, 0)}</strong></td></tr>
+            <tr><td>Gastos fijos</td><td class="n muted">plan ${eur(plan.fijosPlan, 0)}</td><td class="n"><strong>${eur(plan.fijosReal, 0)}</strong></td></tr>
+            <tr><td>Reparto a cuentas</td><td class="n muted">plan ${eur(plan.repartoPlan, 0)}</td><td class="n"><strong>${eur(plan.repartoReal, 0)}</strong></td></tr>
+            <tr class="r-tot"><td>Se queda en ${esc(L.principal ? L.nombre(L.principal) : 'principal')}</td><td class="n muted">plan ${eur(plan.sobrantePlan, 0)}</td><td class="n"><strong>${eur(plan.sobranteReal, 0)}</strong></td></tr></table>`
+            : '<p class="muted small">Este mes no tiene plan de reparto.</p>'}
+            ${pres.length ? `<h3>Límites por categoría</h3><table class="r-t">${pres.map((x) => `<tr><td>${esc(x.nombre)}</td><td class="r-bars">${bar(x.real, Math.max(x.asignado, x.real), x.real > x.asignado ? 'over' : '')}</td><td class="n ${x.real > x.asignado ? 'neg' : ''}">${eur(x.real, 0)} / ${eur(x.asignado, 0)}</td></tr>`).join('')}</table>` : ''}</div>
+        </div>
+        <div class="r-box"><h2>En qué se ha ido</h2><table class="r-t"><tr><th>Categoría</th><th></th><th class="n">Mes</th><th class="n">Media 12m</th><th class="n">Dif.</th></tr>
+          ${cats.slice(0, 8).map((c) => { const d = c.v - c.med; return `<tr><td>${emojiFor(L.byCode[c.code])} ${esc(c.nombre)}</td><td class="r-bars">${bar(c.v, maxC)}${bar(c.med, maxC, 'med')}</td><td class="n"><strong>${eur(c.v, 0)}</strong></td><td class="n muted">${eur(c.med, 0)}</td><td class="n ${Math.abs(d) < 5 ? 'muted' : d > 0 ? 'neg' : 'pos'}">${Math.abs(d) < 0.5 ? '–' : `${d > 0 ? '+' : ''}${eur(d, 0)}`}</td></tr>`; }).join('') || '<tr><td class="muted">Sin gastos</td></tr>'}</table></div>
+      </section>
+
+      <section class="r-page">
+        <header class="r-head sm"><div><div class="r-kicker">Financito · reporte mensual</div><h1>${esc(titulo)} · evolución y patrimonio</h1></div></header>
+        <div class="r-box"><h2>Últimos 12 meses</h2><div class="r-chart"><canvas id="rc1"></canvas></div></div>
+        <div class="r-cols">
+          <div class="r-box"><h2>Balance a fin de mes</h2>${bal ? `<table class="r-t bal">
+            <tr class="r-sec"><td>Lo que tienes</td><td class="n">${eur(bal.totalActivo, 0)}</td></tr>${balRows(bal.activo)}
+            <tr class="r-sec"><td>Lo que debes</td><td class="n">${eur(bal.totalPasivo, 0)}</td></tr>${balRows(bal.pasivo)}
+            <tr class="r-tot"><td>Patrimonio neto</td><td class="n">${eur(bal.patrimonioNeto, 0)}</td></tr></table>` : '<p class="muted small">Mete tus saldos iniciales para ver el balance.</p>'}</div>
+          <div>
+            <div class="r-box"><h2>Año ${esc(m.slice(0, 4))} hasta ${esc(MESES_LARGOS_[Number(m.slice(5)) - 1])}</h2><table class="r-t">
+              <tr><td>Ingresos</td><td class="n">${eur(p.totalIngresos[YTD], 0)}</td></tr><tr><td>Gastos</td><td class="n">${eur(p.totalGastos[YTD], 0)}</td></tr>
+              <tr><td class="r-ind">de ellos imprevistos</td><td class="n muted">${eur(p.imprevistos[YTD], 0)}</td></tr>
+              <tr class="r-tot"><td>Ahorro</td><td class="n">${eur(p.resultado[YTD], 0)}</td></tr>
+              <tr><td>Tasa de ahorro</td><td class="n">${p.totalIngresos[YTD] ? `${fmt((p.resultado[YTD] / p.totalIngresos[YTD]) * 100, 0)} %` : '—'}</td></tr>
+              <tr><td>Ahorro medio al mes</td><td class="n">${eur(p.resultado[YTD] / Number(m.slice(5)), 0)}</td></tr></table></div>
+            ${donde.length ? `<div class="r-box"><h2>Dónde ha ido el ahorro</h2><table class="r-t">${donde.slice(0, 7).map((x) => `<tr><td>${esc(x.nombre)}</td><td class="n ${cls(x.aporta)}">${x.aporta > 0 ? '+' : ''}${eur(x.aporta, 0)}</td></tr>`).join('')}</table></div>` : ''}
+            <div class="r-box"><h2>Gastos más grandes</h2><table class="r-t">${grandes.map((r) => `<tr><td>${esc(shortDate(r.fecha))} · ${esc(r.concepto || L.nombre(r.debe))}${r.clase === 'imprevisto' ? ' <span class="chip imprevisto">imprevisto</span>' : ''}</td><td class="n">${eur(r.importe, 0)}</td></tr>`).join('') || '<tr><td class="muted">—</td></tr>'}</table></div>
+          </div>
+        </div>
+        <footer class="r-foot">${movs.length} movimientos en el mes · ${conDatos.length} meses de historia para las medias${Math.abs(descuadre) >= 0.5 ? ` · correcciones de cierre: ${eur(descuadre)}` : ''}</footer>
+      </section>
+    </div>`;
+  $('#print').onclick = () => window.print();
+  let Chart; try { Chart = await chartReady(); } catch { return; }
+  const v = vizMode(); const months = [...hist.slice(1), m]; const idx = [...H.slice(1), 0];
+  S.charts.push(new Chart($('#rc1'), {
+    type: 'bar',
+    data: { labels: months.map((x) => `${MESES[Number(x.slice(5)) - 1]}${x.slice(5) === '01' || x === months[0] ? ` ${x.slice(2, 4)}` : ''}`), datasets: [
+      { label: 'Ingresos', data: idx.map((i) => p.totalIngresos[i]), backgroundColor: v.s[0], borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: 'start', maxBarThickness: 18 },
+      { label: 'Gastos', data: idx.map((i) => p.totalGastos[i]), backgroundColor: v.s[1], borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: 'start', maxBarThickness: 18 },
+    ] },
+    options: { animation: false, maintainAspectRatio: false, devicePixelRatio: 2, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, boxHeight: 10 } }, tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${eur(c.parsed.y)}` } } }, scales: { x: { grid: { display: false } }, y: { ticks: { callback: (x) => `${fmt(x, 0)} €`, maxTicksLimit: 5 }, grid: { color: v.grid }, border: { display: false } } } },
+  }));
+}
+const MESES_LARGOS_ = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
 // ---------- presupuesto ----------
 function infSobres() {
