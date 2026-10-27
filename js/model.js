@@ -10,6 +10,7 @@ export const TABLES = {
   Saldos: ['id', 'fecha', 'cuenta', 'saldo', 'notas'],
   Reparto: ['id', 'orden', 'hacia', 'importe', 'activo', 'borrado'],
   RepartoMes: ['id', 'mes', 'linea', 'hacia', 'importe', 'borrado'],
+  Inversiones: ['id', 'nombre', 'tipo', 'cuenta', 'fecha_inicio', 'importe_inicial', 'valor_actual', 'fecha_valor', 'fecha_fin', 'importe_final', 'notas', 'borrado'],
   Config: ['clave', 'valor'],
 };
 

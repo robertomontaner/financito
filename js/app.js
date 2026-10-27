@@ -333,14 +333,14 @@ function renderReconnect() {
 }
 
 // ---------------- router ----------------
-const ROUTES = { inicio: viewInicio, mes: viewMes, apuntar: viewApuntar, diario: viewDiario, informes: viewInformes, ajustes: viewAjustes, graficos: viewGraficos };
+const ROUTES = { inicio: viewInicio, mes: viewMes, apuntar: viewApuntar, diario: viewDiario, informes: viewInformes, ajustes: viewAjustes, graficos: viewGraficos, inversiones: viewInversiones };
 function render() {
   if (!S.libro) return;
   const r = (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'inicio';
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.r === r));
-  $('#title').textContent = { inicio: 'Financito', mes: 'Mes', apuntar: 'Apuntar', diario: 'Movimientos', informes: 'Informes', ajustes: 'Ajustes', graficos: 'Gráficos' }[r] || 'Financito';
-  $('#topbar-actions').innerHTML = `${S.store.kind === 'demo' ? '<span class="chip">demo</span>' : ''}<a href="#/graficos" class="iconbtn ${r === 'graficos' ? 'on' : ''}" aria-label="Gráficos" title="Gráficos"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></a><a href="#/ajustes" class="iconbtn ${r === 'ajustes' ? 'on' : ''}" aria-label="Ajustes">⚙</a>`;
-  view().classList.toggle('wide', r === 'graficos' || r === 'informes');
+  $('#title').textContent = { inicio: 'Financito', mes: 'Mes', apuntar: 'Apuntar', diario: 'Movimientos', informes: 'Informes', ajustes: 'Ajustes', graficos: 'Gráficos', inversiones: 'Inversiones' }[r] || 'Financito';
+  $('#topbar-actions').innerHTML = `${S.store.kind === 'demo' ? '<span class="chip">demo</span>' : ''}<a href="#/inversiones" class="iconbtn ${r === 'inversiones' ? 'on' : ''}" aria-label="Inversiones" title="Inversiones"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></a><a href="#/graficos" class="iconbtn ${r === 'graficos' ? 'on' : ''}" aria-label="Gráficos" title="Gráficos"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></a><a href="#/ajustes" class="iconbtn ${r === 'ajustes' ? 'on' : ''}" aria-label="Ajustes">⚙</a>`;
+  view().classList.toggle('wide', ['graficos', 'informes', 'inversiones'].includes(r));
   (ROUTES[r] || viewInicio)();
   view().focus({ preventScroll: true });
 }
@@ -1417,6 +1417,192 @@ async function infReporte() {
 }
 const MESES_LARGOS_ = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
+// ================= CAMBIO DE BANCO (asistente) =================
+function cambioBanco() {
+  const L = S.libro; const hoy = todayISO();
+  const money = (c) => kindOf(c) === 'dinero';
+  openModal(`<h2>Cambiar de banco</h2>
+    <p class="small muted" style="margin-top:-4px">Pasa tu dinero y todo lo que apuntaba a una cuenta (automatizaciones, hipoteca, reparto, límites, cuenta principal) a otra. El historial de la cuenta antigua no se toca.</p>
+    <form novalidate>
+      ${pickerField('desde', 'Desde (la cuenta que dejas)', money, L.principal || '')}
+      ${pickerField('hacia', 'Hacia (la nueva)', money, '', { createKind: 'dinero', placeholder: 'Elegir o crear (p. ej. «Ibercaja»)…', hint: 'Si no existe, escribe su nombre en el buscador y pulsa «Crear».' })}
+      <div class="two"><div class="field"><label class="lbl" for="cb_f">Fecha del cambio</label><input type="date" id="cb_f" name="fecha" value="${hoy}"></div>
+      <div class="field"><label class="lbl" for="cb_i">Dinero que pasas €</label><input type="text" inputmode="decimal" id="cb_i" name="importe" autocomplete="off"><div class="hint" id="cb_sal"></div></div></div>
+      <div class="field"><label class="lbl">Qué hacer</label>
+        <label class="check"><input type="checkbox" name="o_tras" checked> <span>Apuntar el traspaso del dinero</span></label>
+        <label class="check"><input type="checkbox" name="o_rec" checked> <span>Automatizaciones y préstamos: cobrar/pagar desde la nueva</span></label>
+        <label class="check"><input type="checkbox" name="o_rep" checked> <span>Reparto y límites: de este mes en adelante, a la nueva</span></label>
+        <label class="check"><input type="checkbox" name="o_cfg" checked> <span>Si era tu cuenta principal o tu fondo, pasa a ser la nueva</span></label>
+        <label class="check"><input type="checkbox" name="o_off" checked> <span>Ocultar la cuenta antigua (su historial se conserva)</span></label>
+      </div>
+      <div class="banner" id="cb_prev" hidden></div>
+      <div class="actions"><button type="button" class="btn" data-cancel>Cancelar</button><button class="btn primary" type="submit">Hacer el cambio</button></div>
+    </form>`, (m) => {
+    const f = $('form', m); bindPickers(m); $('[data-cancel]', m).onclick = closeModal;
+    const val = (n) => f.elements[n].value;
+    const plan = () => {
+      const from = val('desde'); const to = val('hacia'); const mes = ym(val('fecha') || hoy);
+      const rec = (L.db.Recurrentes || []).filter((r) => r.nombre && (String(r.debe) === from || String(r.haber) === from));
+      const pre = (L.db.Prestamos || []).filter((p) => p.nombre && String(p.cuenta_banco) === from);
+      const rep = (L.db.RepartoMes || []).filter((x) => !truthy(x.borrado) && String(x.hacia) === from && x.mes >= mes);
+      const repT = (L.db.Reparto || []).filter((x) => !truthy(x.borrado) && String(x.hacia) === from);
+      const presu = (L.db.Presupuesto || []).filter((x) => !truthy(x.borrado) && String(x.cuenta) === from && (x.mes === '*' || x.mes >= mes));
+      const cfg = ['cuenta_principal', 'cuenta_fondo'].filter((k) => (k === 'cuenta_principal' ? L.principal : L.fondo) === from);
+      return { from, to, mes, rec, pre, rep, repT, presu, cfg };
+    };
+    const refresh = () => {
+      const p = plan(); const prev = $('#cb_prev', m);
+      if (L.inicio && p.from) { const s = L.balanceToDate(p.from); $('#cb_sal', m).textContent = `Saldo actual: ${eur(s)}`; if (!f.elements.importe.dataset.touched) f.elements.importe.value = s > 0 ? String(round2(s)).replace('.', ',') : ''; }
+      if (!p.from || !p.to) { prev.hidden = true; return; }
+      if (p.from === p.to) { prev.hidden = false; prev.innerHTML = 'Elige dos cuentas distintas.'; return; }
+      const items = [
+        f.elements.o_tras.checked && num(val('importe')) > 0 && `traspaso de ${eur(num(val('importe')))}`,
+        f.elements.o_rec.checked && p.rec.length && `${p.rec.length} ${p.rec.length > 1 ? 'automatizaciones' : 'automatización'}`,
+        f.elements.o_rec.checked && p.pre.length && `${p.pre.length} préstamo${p.pre.length > 1 ? 's' : ''}`,
+        f.elements.o_rep.checked && (p.rep.length + p.repT.length) && `${p.rep.length + p.repT.length} línea${p.rep.length + p.repT.length > 1 ? 's' : ''} de reparto`,
+        f.elements.o_rep.checked && p.presu.length && `${p.presu.length} límite${p.presu.length > 1 ? 's' : ''}`,
+        f.elements.o_cfg.checked && p.cfg.length && (p.cfg.includes('cuenta_principal') ? 'cuenta principal' : 'fondo de imprevistos'),
+        f.elements.o_off.checked && `ocultar ${L.nombre(p.from)}`,
+      ].filter(Boolean);
+      prev.hidden = false; prev.innerHTML = `<strong>${esc(L.nombre(p.from))} → ${esc(L.nombre(p.to))}</strong>: ${items.length ? esc(items.join(' · ')) : 'nada que cambiar'}.`;
+    };
+    f.addEventListener('change', refresh); f.elements.importe.addEventListener('input', (e) => { e.target.dataset.touched = '1'; refresh(); });
+    refresh();
+    f.onsubmit = async (e) => {
+      e.preventDefault(); const p = plan();
+      if (!p.from || !p.to || p.from === p.to) { toast('Elige la cuenta que dejas y la nueva'); return; }
+      const btn = $('button[type=submit]', f); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+      try {
+        const swap = (v) => (String(v) === p.from ? p.to : v);
+        const imp = num(val('importe'));
+        if (f.elements.o_tras.checked && imp > 0) await S.store.add('Diario', [newEntry({ fecha: val('fecha') || hoy, concepto: `Cambio de banco: ${L.nombre(p.from)} → ${L.nombre(p.to)}`, debe: p.to, haber: p.from, importe: imp, clase: 'traspaso', origen: 'cambio-banco' })]);
+        if (f.elements.o_rec.checked) {
+          if (p.rec.length) await S.store.update('Recurrentes', p.rec.map((r) => ({ ...r, debe: swap(r.debe), haber: swap(r.haber) })));
+          if (p.pre.length) await S.store.update('Prestamos', p.pre.map((x) => ({ ...x, cuenta_banco: p.to })));
+        }
+        if (f.elements.o_rep.checked) {
+          if (p.rep.length) await S.store.update('RepartoMes', p.rep.map((x) => ({ ...x, hacia: p.to })));
+          if (p.repT.length) await S.store.update('Reparto', p.repT.map((x) => ({ ...x, hacia: p.to })));
+          if (p.presu.length) await S.store.update('Presupuesto', p.presu.map((x) => ({ ...x, cuenta: p.to })));
+        }
+        if (f.elements.o_cfg.checked) for (const k of p.cfg) await setConfig(k, p.to);
+        if (f.elements.o_off.checked) { const c = L.byCode[p.from]; if (c) await S.store.update('Cuentas', [{ ...c, activa: 0 }]); }
+        await reload(); closeModal(); render(); toast(`Hecho: ahora usas ${L.nombre(p.to)}`);
+      } catch (err) { btn.disabled = false; btn.textContent = 'Hacer el cambio'; fail(err); }
+    };
+  });
+}
+
+// ================= INVERSIONES (seguimiento sencillo, fuera de la contabilidad) =================
+const INV_TIPOS = [['etf', 'ETF / fondo indexado'], ['fondo', 'Fondo de inversión'], ['accion', 'Acciones'], ['cripto', 'Cripto'], ['deposito', 'Depósito / letras'], ['plan', 'Plan de pensiones'], ['otro', 'Otro']];
+const INV_EMOJI = { etf: '📊', fondo: '🏦', accion: '📈', cripto: '🪙', deposito: '🔒', plan: '🧓', otro: '💼' };
+const dayMs = 864e5;
+// una inversión: t0/v0 → t1/v1 (t1 = venta o última valoración)
+function invCalc(x) {
+  const v0 = num(x.importe_inicial); const cerrada = !!x.fecha_fin;
+  const t0 = x.fecha_inicio; const t1 = cerrada ? x.fecha_fin : (x.fecha_valor || todayISO());
+  const v1 = cerrada ? num(x.importe_final) : (x.valor_actual === '' || x.valor_actual === undefined ? v0 : num(x.valor_actual));
+  const dias = Math.max(0, Math.round((new Date(`${t1}T12:00:00`) - new Date(`${t0}T12:00:00`)) / dayMs));
+  const benef = round2(v1 - v0); const rent = v0 ? v1 / v0 - 1 : 0;
+  const anual = v0 > 0 && v1 > 0 && dias >= 1 ? (v1 / v0) ** (365 / dias) - 1 : null;
+  return { ...x, v0, v1, t0, t1, dias, benef, rent, anual, cerrada };
+}
+// TIR anualizada de varios flujos (XIRR): -v0 en t0 y +v1 en t1 de cada inversión
+function xirr(flows) {
+  if (!flows.length || !flows.some((f) => f.v > 0) || !flows.some((f) => f.v < 0)) return null;
+  const t0 = Math.min(...flows.map((f) => f.t));
+  const npv = (r) => flows.reduce((s, f) => s + f.v / (1 + r) ** ((f.t - t0) / (365 * dayMs)), 0);
+  let lo = -0.9999; let hi = 10; let flo = npv(lo); let fhi = npv(hi);
+  if (flo * fhi > 0) return null;
+  for (let i = 0; i < 200; i++) { const mid = (lo + hi) / 2; const fm = npv(mid); if (Math.abs(fm) < 1e-7) return mid; if (flo * fm < 0) { hi = mid; fhi = fm; } else { lo = mid; flo = fm; } }
+  return (lo + hi) / 2;
+}
+function invTotals(list) {
+  const v0 = round2(list.reduce((s, x) => s + x.v0, 0)); const v1 = round2(list.reduce((s, x) => s + x.v1, 0));
+  const flows = list.flatMap((x) => [{ t: new Date(`${x.t0}T12:00:00`).getTime(), v: -x.v0 }, { t: new Date(`${x.t1}T12:00:00`).getTime(), v: x.v1 }]);
+  return { n: list.length, v0, v1, benef: round2(v1 - v0), rent: v0 ? v1 / v0 - 1 : 0, tir: list.length ? xirr(flows) : null };
+}
+const pctS = (r, dec = 1) => (r === null || r === undefined || !isFinite(r) ? '—' : `${r > 0 ? '+' : ''}${fmt(r * 100, dec)} %`);
+const durTxt = (d) => (d < 60 ? `${d} días` : d < 730 ? `${fmt(d / 30.44, 0)} meses` : `${fmt(d / 365.25, 1)} años`);
+
+function viewInversiones() {
+  const L = S.libro; S.invTab ??= 'abiertas';
+  const all = (L.db.Inversiones || []).filter((x) => !truthy(x.borrado) && x.nombre).map(invCalc);
+  const abiertas = all.filter((x) => !x.cerrada); const cerradas = all.filter((x) => x.cerrada);
+  const tA = invTotals(abiertas); const tC = invTotals(cerradas); const tT = invTotals(all);
+  const list = { abiertas, cerradas, todas: all }[S.invTab].sort((a, b) => (a.cerrada === b.cerrada ? b.t0.localeCompare(a.t0) : a.cerrada ? 1 : -1));
+  const maxAbs = Math.max(...list.map((x) => Math.abs(x.benef)), 1);
+  const tot = (t, label, sub) => `<div class="inv-tot"><div class="lbl">${label}</div><div class="val ${cls(t.benef)}">${t.benef > 0 ? '+' : ''}${eur(t.benef, 0)}</div><div class="sub">${pctS(t.rent)} · TIR ${pctS(t.tir)}/año</div><div class="sub muted">${sub}</div></div>`;
+  view().innerHTML = `
+    <div class="kpis inv-k">
+      <div class="kpi"><div class="lbl">Valor actual (abiertas)</div><div class="val">${eur(tA.v1, 0)}</div><div class="sub">invertido ${eur(tA.v0, 0)} en ${tA.n} posicion${tA.n === 1 ? '' : 'es'}</div></div>
+      <div class="kpi"><div class="lbl">Beneficio latente</div><div class="val ${cls(tA.benef)}">${tA.benef > 0 ? '+' : ''}${eur(tA.benef, 0)}</div><div class="sub">${pctS(tA.rent)} sobre lo invertido</div></div>
+      <div class="kpi"><div class="lbl">Rentabilidad anual (TIR)</div><div class="val ${cls(tA.tir || 0)}">${pctS(tA.tir)}</div><div class="sub">de las abiertas, por tiempo invertido</div></div>
+    </div>
+    <div class="card inv-sum"><div class="inv-tots">${tot(tA, 'Abiertas · latente', `${eur(tA.v0, 0)} → ${eur(tA.v1, 0)}`)}${tot(tC, 'Cerradas · realizado', `${tC.n} vendida${tC.n === 1 ? '' : 's'}`)}${tot(tT, 'Total de todo', `${eur(tT.v0, 0)} invertidos en total`)}</div></div>
+    <div class="row between" style="margin:14px 0 10px;gap:8px;flex-wrap:wrap">
+      <div class="seg mini">${[['abiertas', `Abiertas (${abiertas.length})`], ['cerradas', `Cerradas (${cerradas.length})`], ['todas', 'Todas']].map(([k, l]) => `<button data-it="${k}" class="${S.invTab === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <button class="btn primary sm" id="invnew">+ Nueva inversión</button></div>
+    <div class="inv-grid">${list.map((x) => `<div class="card inv-card ${x.cerrada ? 'closed' : ''}" data-inv="${esc(x.id)}">
+        <div class="row between" style="gap:8px"><div class="row" style="gap:10px;min-width:0"><span class="pk-ic">${INV_EMOJI[x.tipo] || '💼'}</span><div style="min-width:0"><div class="t inv-name">${esc(x.nombre)}</div><div class="small muted">${esc((INV_TIPOS.find(([k]) => k === x.tipo) || [, 'Inversión'])[1])}${x.cuenta ? ` · ${esc(L.nombre(x.cuenta))}` : ''}</div></div></div>
+          <span class="chip ${x.cerrada ? '' : 'ok'}">${x.cerrada ? 'vendida' : 'abierta'}</span></div>
+        <div class="inv-flow"><div><small>${esc(shortDate(x.t0))} ${x.t0.slice(0, 4)}</small><strong>${eur(x.v0)}</strong></div><span class="inv-arrow">→ ${durTxt(x.dias)} →</span><div class="r"><small>${x.cerrada ? 'venta' : 'valor'} ${esc(shortDate(x.t1))} ${x.t1.slice(0, 4)}</small><strong>${eur(x.v1)}</strong></div></div>
+        <div class="inv-bar"><span class="${x.benef < 0 ? 'neg' : ''}" style="width:${Math.max(2, (Math.abs(x.benef) / maxAbs) * 100)}%"></span></div>
+        <div class="inv-stats"><div><small>Beneficio</small><strong class="${cls(x.benef)}">${x.benef > 0 ? '+' : ''}${eur(x.benef)}</strong></div><div><small>Rentabilidad</small><strong class="${cls(x.rent)}">${pctS(x.rent)}</strong></div><div><small>Anualizada</small><strong class="${cls(x.anual || 0)}">${pctS(x.anual)}</strong>${x.dias < 365 && x.anual !== null ? '<small class="muted">menos de 1 año</small>' : ''}</div></div>
+        ${x.cerrada ? '' : `<div class="row" style="gap:6px;margin-top:10px"><button class="btn sm" data-upd="${esc(x.id)}">Actualizar valor</button><button class="btn sm" data-close="${esc(x.id)}">Vender</button></div>`}
+      </div>`).join('') || `<div class="empty">${S.invTab === 'cerradas' ? 'Aún no has vendido ninguna.' : 'Apunta tu primera inversión: cuándo entraste (t0), cuánto pusiste (v0) y cuánto vale hoy.'}</div>`}</div>
+    <details class="card infohelp" style="margin-top:14px"><summary><strong>Cómo se calcula</strong></summary><div class="small">
+      <p><strong>Beneficio</strong> = valor (o venta) − lo invertido. <strong>Rentabilidad</strong> = beneficio ÷ invertido.</p>
+      <p><strong>Anualizada</strong> (geométrica, CAGR) = (valor ÷ invertido)<sup>365 / días</sup> − 1: lo que habría rendido cada año a interés compuesto. Con menos de un año exagera, tómala con cuidado.</p>
+      <p><strong>TIR</strong> de los totales: la rentabilidad anual que pondera cuánto dinero y cuánto tiempo estuvo en cada inversión.</p>
+      <p class="muted">Este seguimiento va aparte de la contabilidad. Para que el balance refleje el valor de tus inversiones, usa Informes → Bancos (cierre de saldos) con tu cuenta de inversión.</p></div></details>`;
+  $$('[data-it]').forEach((b) => { b.onclick = () => { S.invTab = b.dataset.it; viewInversiones(); }; });
+  $('#invnew').onclick = () => editInversion();
+  $$('[data-inv]').forEach((c) => { c.onclick = (e) => { if (e.target.closest('button')) return; editInversion(c.dataset.inv); }; });
+  $$('[data-upd]').forEach((b) => { b.onclick = () => invQuick(b.dataset.upd, 'upd'); });
+  $$('[data-close]').forEach((b) => { b.onclick = () => invQuick(b.dataset.close, 'close'); });
+}
+function invRow(id) { return (S.libro.db.Inversiones || []).find((x) => String(x.id) === String(id)); }
+function editInversion(id) {
+  const x = id ? invRow(id) : null; const hoy = todayISO();
+  formModal({
+    title: x ? x.nombre : 'Nueva inversión',
+    fields: [
+      { key: 'nombre', label: 'Nombre', required: true, placeholder: 'p. ej. MSCI World (Trade Republic)' },
+      { key: 'tipo', label: 'Tipo', type: 'select', options: INV_TIPOS },
+      { key: 'cuenta', label: 'Dónde está (opcional)', type: 'account', filter: (c) => kindOf(c) === 'dinero' },
+      { key: 'fecha_inicio', label: 'Fecha de entrada (t0)', type: 'date', required: true },
+      { key: 'importe_inicial', label: 'Invertido (v0) €', type: 'number', required: true },
+      { key: 'valor_actual', label: 'Valor actual €', type: 'number', hint: 'Lo que vale hoy. Déjalo vacío si aún no lo sabes.' },
+      { key: 'fecha_valor', label: 'Fecha de ese valor', type: 'date' },
+      { key: 'fecha_fin', label: 'Fecha de venta (si ya la vendiste)', type: 'date' },
+      { key: 'importe_final', label: 'Importe de la venta €', type: 'number' },
+      { key: 'notas', label: 'Notas', type: 'textarea' },
+    ],
+    values: x || { tipo: 'etf', fecha_inicio: hoy, fecha_valor: hoy },
+    onSave: async (d) => {
+      if (d.fecha_fin && d.importe_final === '') throw new Error('Pon el importe de la venta');
+      if (d.valor_actual !== '' && !d.fecha_valor) d.fecha_valor = hoy;
+      const row = { ...(x || { id: uid(), borrado: '' }), ...d };
+      if (x) await S.store.update('Inversiones', [row]); else await S.store.add('Inversiones', [row]);
+      await reload();
+    },
+    onDelete: x ? async () => { await S.store.update('Inversiones', [{ ...x, borrado: 1 }]); await reload(); } : null,
+  });
+}
+function invQuick(id, mode) {
+  const x = invRow(id); const hoy = todayISO();
+  formModal({
+    title: mode === 'upd' ? `Valor de ${x.nombre}` : `Vender ${x.nombre}`,
+    fields: mode === 'upd'
+      ? [{ key: 'valor_actual', label: 'Valor hoy €', type: 'number', required: true }, { key: 'fecha_valor', label: 'Fecha', type: 'date', required: true }]
+      : [{ key: 'importe_final', label: 'Importe recibido €', type: 'number', required: true, hint: 'Lo que te ingresan, ya descontadas comisiones.' }, { key: 'fecha_fin', label: 'Fecha de venta', type: 'date', required: true }],
+    values: mode === 'upd' ? { valor_actual: x.valor_actual, fecha_valor: hoy } : { importe_final: x.valor_actual, fecha_fin: hoy },
+    saveLabel: mode === 'upd' ? 'Guardar valor' : 'Marcar vendida',
+    onSave: async (d) => { await S.store.update('Inversiones', [{ ...x, ...d }]); await reload(); },
+  });
+}
+
 // ---------- presupuesto ----------
 function infSobres() {
   const L = S.libro; const m = S.mes;
@@ -1527,7 +1713,7 @@ function viewAjustes() {
     <h2 style="margin-top:4px">Mis cuentas</h2>
     <div class="card"><p class="small muted" style="margin-top:0">Donde tienes (o debes) el dinero: bancos, efectivo, inversiones, bienes y deudas.</p>
       <ul class="list">${listOf(['dinero', 'bien', 'deuda']).map((c) => accLi(c, true)).join('')}</ul>
-      <div class="row wrap" style="margin-top:8px"><button class="btn sm" data-new="dinero">+ Banco o inversión</button><button class="btn sm" data-new="bien">+ Bien</button><button class="btn sm" data-new="deuda">+ Deuda</button></div></div>
+      <div class="row wrap" style="margin-top:8px"><button class="btn sm" data-new="dinero">+ Banco o inversión</button><button class="btn sm" data-new="bien">+ Bien</button><button class="btn sm" data-new="deuda">+ Deuda</button><button class="btn sm" id="bankmove">⇄ Cambiar de banco…</button></div></div>
 
     <h2>Categorías</h2>
     <div class="card"><h3 style="margin-top:0">De gasto</h3><ul class="list">${listOf(['gasto']).map((c) => accLi(c)).join('')}</ul>
@@ -1572,6 +1758,7 @@ function viewAjustes() {
   $('#addrec').onclick = () => editRecurrente(null);
   $$('[data-act]').forEach((li) => { li.onclick = () => editActivo(li.dataset.act); });
   $('#addact').onclick = () => editActivo(null);
+  $('#bankmove').onclick = cambioBanco;
   $$('[data-pre]').forEach((li) => { li.onclick = () => editPrestamo(li.dataset.pre); });
   $('#addpre').onclick = () => editPrestamo(null);
   $$('[data-acc]').forEach((li) => { li.onclick = () => editCuenta(li.dataset.acc); });
