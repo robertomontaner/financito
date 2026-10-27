@@ -990,7 +990,7 @@ function infPyG() {
   const empty = `<tr><td class="muted" colspan="${n + 1}">Nada en este periodo</td></tr>`;
   $('#inf').innerHTML = `${periodBar(infPyG)}
     ${isMes ? `<div class="kpis" style="margin-bottom:12px"><div class="kpi"><div class="lbl">Ahorro de ${esc(mesLargo(S.mes))}</div><div class="val ${cls(p.resultado[0])}">${eur(p.resultado[0], 0)}</div><div class="sub">ingresos − gastos</div></div><div class="kpi"><div class="lbl">Ingresos</div><div class="val">${eur(p.totalIngresos[0], 0)}</div></div><div class="kpi"><div class="lbl">Gastos</div><div class="val">${eur(p.totalGastos[0], 0)}</div><div class="sub">${p.imprevistos[0] ? `${eur(p.imprevistos[0], 0)} imprevistos` : 'sin imprevistos'}</div></div></div>` : ''}
-    <div class="tablewrap"><table class="rep">${head}
+    <div class="tablewrap"><table class="rep xhair">${head}
       <tr class="sec"><td colspan="${n + 1}">Ingresos</td></tr>
       ${p.ingresos.map((r) => line(r, false)).join('') || empty}
       <tr class="sub"><td>Total ingresos</td>${cellsOf(p.totalIngresos, cell, false)}</tr>
@@ -1001,7 +1001,7 @@ function infPyG() {
       <tr class="dim"><td>Ahorro sin imprevistos</td>${cellsOf(p.resultado.map((v, i) => v + p.imprevistos[i]), cellNeg, false)}</tr>
     </table></div>
     <p class="small muted">Toca una línea para ver sus movimientos. Los traspasos entre tus cuentas y las compras de bienes (piso, coche…) no aparecen aquí porque no son ni ingreso ni gasto.</p>`;
-  goAccount($('#inf'));
+  goAccount($('#inf')); crosshair($('#inf'));
 }
 
 function dondeAhorroHtml(m) {
@@ -1047,7 +1047,7 @@ function infBalance() {
     <div class="kpis" style="margin-bottom:12px"><div class="kpi"><div class="lbl">Patrimonio neto · fin de ${esc(MESES[Number(target.month.slice(5)) - 1].toLowerCase())}</div><div class="val">${eur(target.patrimonioNeto, 0)}</div><div class="sub">${withDiff ? `${target.patrimonioNeto - bals[0].patrimonioNeto >= 0 ? '+' : ''}${eur(target.patrimonioNeto - bals[0].patrimonioNeto, 0)} en el mes` : 'lo que tienes − lo que debes'}</div></div>
     <div class="kpi"><div class="lbl">Lo que tienes</div><div class="val">${eur(target.totalActivo, 0)}</div></div><div class="kpi"><div class="lbl">Lo que debes</div><div class="val">${eur(target.totalPasivo, 0)}</div></div></div>
     ${isMes && !(L.inicio && ym(L.inicio) === S.mes) ? dondeAhorroHtml(S.mes) : ''}
-    <div class="tablewrap"><table class="rep">${head}
+    <div class="tablewrap"><table class="rep xhair">${head}
       ${section('activo', 'Lo que tienes (activo)')}
       ${row('Total activo', bals.map((b) => b.totalActivo), 'sub')}
       ${section('pasivo', 'Lo que debes (pasivo)')}
@@ -1057,7 +1057,18 @@ function infBalance() {
     </table></div>
     <p class="small muted">Saldos a final de mes${L.inicio ? `, contando desde tu apertura del ${esc(L.inicio)}` : ''}. La variación del patrimonio debería coincidir con tu ahorro del mes (más revalorizaciones).</p>`;
   $('#goap')?.addEventListener('click', () => { setTimeout(apertura, 50); });
-  goAccount($('#inf'));
+  goAccount($('#inf')); crosshair($('#inf'));
+}
+
+// al pasar el ratón por una celda se sombrean su fila y su columna
+function crosshair(root) {
+  if (!matchMedia('(hover: hover)').matches) return;
+  $$('table.xhair', root).forEach((t) => {
+    let col = -1;
+    const paint = (i) => { if (i === col) return; $$('.xcol', t).forEach((c) => c.classList.remove('xcol')); col = i; if (i > 0) $$('tr', t).forEach((tr) => tr.cells[i] && tr.cells[i].colSpan === 1 && tr.cells[i].classList.add('xcol')); };
+    t.addEventListener('mouseover', (e) => { const c = e.target.closest('td,th'); if (c && t.contains(c)) paint(c.closest('tr').querySelector('[colspan]') ? -1 : c.cellIndex); });
+    t.addEventListener('mouseleave', () => paint(-1));
+  });
 }
 
 let chartLib = null;

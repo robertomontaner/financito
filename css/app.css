@@ -388,3 +388,11 @@ p .tip-i { margin: 0 2px; cursor: default; }
 .a-cell.me .a-amt { color: var(--text); }
 .a-sum { text-align: right; font-weight: 700; padding: 6px 8px; border-top: 3px double var(--text); font-variant-numeric: tabular-nums; }
 @media (max-width: 520px) { .a-cell { flex-direction: column; gap: 2px; } .a-amt { align-self: flex-end; } }
+
+/* cruz de lectura en PyG y balance */
+@media (hover: hover) {
+  table.xhair tr:not(.sec):hover > td { background-color: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+  table.xhair .xcol { background-color: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+  table.xhair tr:not(.sec):hover > td.xcol { background-color: color-mix(in srgb, var(--accent) 16%, var(--surface)); font-weight: 650; }
+  table.xhair th.xcol { color: var(--text); }
+}
