@@ -54,7 +54,7 @@ Las líneas son aproximadas. Busca por el nombre de la función.
 - **Mes (plan de caja):** `viewMes`, `fijoMes` (importe especial solo para un mes), `copiarPlan`, `juntarRepetidas`, `editLinea`, `cfgMes`, `hacerReparto` y `deshacerReparto`.
 - **Movimientos:** `viewDiario`.
 - **Informes** (`INFORMES`, con ayuda plegable `INF_HELP`):
-  - `infLibro`: libro diario como tarjetas de asiento numeradas por año.
+  - `infLibro`: libro diario; cada asiento es una fila: [fecha + concepto] | debe | haber, con etiqueta Balance o PyG y el sentido del movimiento (sin número de asiento, decisión del usuario).
   - `infMayor`:
     - Vista principal: «Cuentas en T», con las cuentas agrupadas por tipo; al tocar un apunte se iluminan sus dos mitades.
     - Alternativa: «Sumas y saldos».

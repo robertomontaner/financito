@@ -797,13 +797,16 @@ function infLibro() {
   S.libroN ??= 40; const shown = all.slice(0, S.libroN);
   const sideRows = (rows, side) => {
     const acc = {}; rows.forEach((r) => { const c = side === 'd' ? r.debe : r.haber; acc[c] = (acc[c] || 0) + r.importe; });
-    return Object.entries(acc).map(([c, v]) => `<div class="as-line"><span class="as-acc"><span class="as-code">${esc(c)}</span> ${esc(L.nombre(c))}</span><span class="as-amt">${fmt(v)}</span></div>`).join('');
+    return Object.entries(acc).map(([c, v]) => { const kk = L.kind(c); const ar = AREA[kk] || 'Balance';
+      return `<div class="dl-acc"><span class="dl-name">${emojiFor(L.byCode[c])} ${esc(L.nombre(c))}<small><span class="chip area-${ar === 'PyG' ? 'pyg' : 'bal'}">${ar}</span> ${esc((MOVE[kk] || MOVE.contable)[side === 'd' ? 0 : 1])}</small></span><span class="dl-amt">${fmt(v)}</span></div>`; }).join('');
   };
+  const dd = (iso) => { const d = new Date(`${iso}T12:00:00`); return `<b>${d.getDate()}</b>${MESES[d.getMonth()].toUpperCase()}`; };
   $('#inf').innerHTML = `${periodBar(infLibro)}
     <div class="small muted" style="margin:-4px 2px 8px">${all.length} asientos · ${eur(all.reduce((s, a) => s + a.total, 0), 0)} movidos</div>
-    ${shown.map((a) => `<div class="asiento tap" data-id="${esc(a.rows[0].id)}">
-      <div class="as-head"><span class="as-n">Nº ${a.n}</span><span class="as-date">${esc(shortDate(a.fecha))}</span><span class="as-concept">${esc(a.concepto || '(sin concepto)')}</span>${a.clase && a.clase !== 'corriente' ? `<span class="chip ${esc(a.clase)}">${esc(CLASES[a.clase] || a.clase)}</span>` : ''}</div>
-      <div class="as-body"><div class="as-col debe"><div class="as-lbl">Debe · recibe</div>${sideRows(a.rows, 'd')}</div><div class="as-col haber"><div class="as-lbl">Haber · entrega</div>${sideRows(a.rows, 'h')}</div></div>
+    <div class="dl-head"><span></span><span>Debe · recibe</span><span>Haber · entrega</span></div>
+    ${shown.map((a) => `<div class="asiento dl tap" data-id="${esc(a.rows[0].id)}">
+      <div class="dl-what"><span class="dl-date">${dd(a.fecha)}</span><span class="dl-concept">${esc(a.concepto || '(sin concepto)')}${a.clase && a.clase !== 'corriente' ? `<span class="chip ${esc(a.clase)}">${esc(CLASES[a.clase] || a.clase)}</span>` : ''}</span></div>
+      <div class="dl-col l">${sideRows(a.rows, 'd')}</div><div class="dl-col">${sideRows(a.rows, 'h')}</div>
     </div>`).join('') || '<div class="empty">Sin asientos en este periodo.</div>'}
     ${all.length > shown.length ? '<button class="btn block" id="more">Ver más</button>' : ''}`;
   $$('.asiento[data-id]').forEach((el) => { el.onclick = () => editEntry(el.dataset.id); });

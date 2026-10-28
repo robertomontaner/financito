@@ -478,3 +478,26 @@ p .tip-i { margin: 0 2px; cursor: default; }
 .inv-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
 .inv-stats small { display: block; font-size: 11px; color: var(--muted); }
 .inv-stats strong { font-variant-numeric: tabular-nums; }
+
+/* libro diario: [qué y cuándo] | debe | haber */
+.dl-head, .asiento.dl { display: grid; grid-template-columns: minmax(150px, 1.1fr) minmax(0, 1.5fr) minmax(0, 1.5fr); }
+.dl-head { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 650; padding: 0 0 6px; }
+.dl-head span { padding: 0 12px; }
+.asiento.dl { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; overflow: hidden; box-shadow: var(--shadow); padding: 0; }
+.dl-what { display: flex; gap: 10px; align-items: center; padding: 10px 12px; background: var(--surface-2); min-width: 0; }
+.dl-date { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 42px; padding: 4px 6px; border-radius: 8px; background: var(--surface); font-size: 10.5px; letter-spacing: .06em; color: var(--muted); line-height: 1.1; }
+.dl-date b { font-size: 17px; color: var(--text); letter-spacing: 0; }
+.dl-concept { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.dl-col { padding: 8px 12px; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+.dl-col.l { border-right: 2px solid var(--text); border-left: 1px solid var(--line); }
+.dl-acc { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.dl-name { min-width: 0; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; }
+.dl-name small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+.dl-amt { font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; }
+@media (max-width: 640px) {
+  .dl-head { grid-template-columns: 1fr 1fr; } .dl-head span:first-child { display: none; }
+  .asiento.dl { grid-template-columns: 1fr 1fr; }
+  .dl-what { grid-column: 1 / -1; padding: 8px 10px; }
+  .dl-col.l { border-left: 0; }
+  .dl-acc { flex-direction: column; align-items: flex-start; gap: 2px; } .dl-amt { align-self: flex-end; }
+}
