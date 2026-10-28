@@ -501,3 +501,7 @@ p .tip-i { margin: 0 2px; cursor: default; }
   .dl-col.l { border-left: 0; }
   .dl-acc { flex-direction: column; align-items: flex-start; gap: 2px; } .dl-amt { align-self: flex-end; }
 }
+
+.ss-acc { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+.ss-name { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-code { font-size: 11px; color: var(--muted); background: var(--surface-2); border-radius: 6px; padding: 1px 6px; font-variant-numeric: tabular-nums; }

@@ -849,7 +849,7 @@ function bindTips(root) {
 function infMayor() {
   const L = S.libro; const [from, to] = periodRange();
   if (S.mayorCuenta) return mayorCuenta(S.mayorCuenta);
-  S.mayorVista ??= 't';
+  S.mayorVista ??= 'tabla';
   const rows = L.activeRows.filter((r) => r.fecha >= from && r.fecha <= to).sort((a, b) => a.fecha.localeCompare(b.fecha));
   const sums = {};
   for (const r of rows) { (sums[r.debe] ??= { d: [], h: [] }).d.push(r); (sums[r.haber] ??= { d: [], h: [] }).h.push(r); }
@@ -881,10 +881,10 @@ function infMayor() {
     for (const c of codes) {
       const g = c[0]; if (g !== cur) { cur = g; html += `<tr class="sec"><td colspan="4">${esc(g)} · ${esc(GRP[g] || 'Otras')}</td></tr>`; }
       const d = round2(sums[c].d.reduce((s, r) => s + r.importe, 0)); const h = round2(sums[c].h.reduce((s, r) => s + r.importe, 0)); td += d; th += h; const sal = L.debitNormal(c) ? d - h : h - d;
-      html += `<tr class="tap" data-acc="${esc(c)}"><td><span class="as-code">${esc(c)}</span> ${esc(L.nombre(c))}</td><td class="n">${d ? fmt(d, 0) : '<span class="muted">—</span>'}</td><td class="n">${h ? fmt(h, 0) : '<span class="muted">—</span>'}</td><td class="n ${cls(sal)}">${fmt(sal, 0)}</td></tr>`;
+      html += `<tr class="tap" data-acc="${esc(c)}"><td><span class="ss-acc"><span class="pk-ic sm">${emojiFor(L.byCode[c])}</span><span class="ss-name">${esc(L.nombre(c))}</span><span class="ss-code">${esc(c)}</span></span></td><td class="n">${d ? eur(d, 0) : '<span class="muted">—</span>'}</td><td class="n">${h ? eur(h, 0) : '<span class="muted">—</span>'}</td><td class="n ${['gasto', 'ingreso'].includes(L.kind(c)) ? '' : cls(sal)}">${sal > 0 ? '+' : ''}${eur(sal, 0)}</td></tr>`;
     }
     body = `<div class="tablewrap"><table class="rep"><tr><th>Cuenta</th><th>Debe</th><th>Haber</th><th>Movimiento</th></tr>${html || '<tr><td colspan="4" class="muted">Sin movimientos</td></tr>'}
-      <tr class="tot"><td>Total</td><td class="n">${fmt(td, 0)}</td><td class="n">${fmt(th, 0)}</td><td class="n">${Math.abs(td - th) < 0.01 ? '✓' : `<span class="neg">${fmt(td - th)}</span>`}</td></tr></table></div>
+      <tr class="tot"><td>Total</td><td class="n">${eur(td, 0)}</td><td class="n">${eur(th, 0)}</td><td class="n">${Math.abs(td - th) < 0.01 ? '✓' : `<span class="neg">${fmt(td - th)}</span>`}</td></tr></table></div>
       <p class="small muted">En doble partida el total del debe siempre es igual al del haber. Toca una cuenta para ver su mayor.</p>`;
   }
   $('#inf').innerHTML = `${periodBar(infMayor)}

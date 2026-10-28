@@ -56,8 +56,8 @@ Las líneas son aproximadas. Busca por el nombre de la función.
 - **Informes** (`INFORMES`, con ayuda plegable `INF_HELP`):
   - `infLibro`: libro diario; cada asiento es una fila: [fecha + concepto] | debe | haber, con etiqueta Balance o PyG y el sentido del movimiento (sin número de asiento, decisión del usuario).
   - `infMayor`:
-    - Vista principal: «Cuentas en T», con las cuentas agrupadas por tipo; al tocar un apunte se iluminan sus dos mitades.
-    - Alternativa: «Sumas y saldos».
+    - Vista por defecto: «Sumas y saldos», con emoji, nombre y código del plan en cada cuenta (decisión del usuario).
+    - Alternativa: «Cuentas en T», con las cuentas agrupadas por tipo; al tocar un apunte se iluminan sus dos mitades.
   - `mayorCuenta(code)`, el mayor de una cuenta:
     - Vista por defecto «Con su pareja»: cada movimiento con la cuenta del debe y la del haber, con la cuenta propia resaltada. Es lo que el usuario quería.
     - Alternativa: «T clásica».
