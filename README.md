@@ -4,7 +4,9 @@ Webapp de contabilidad personal de **doble partida** (inspirada en el Plan Gener
 
 - **Apuntar** con plantillas: gasto, ingreso, traspaso, compra de activo o asiento libre. Cada movimiento es un asiento debe/haber.
 - **Mes**: plan de caja al estilo hoja de Excel: ingresos previstos, gastos fijos, reparto a cuentas (plantilla editable, por mes o para siempre), lo que se queda en la cuenta principal y botón para hacer o deshacer el reparto.
-- **Informes**: PyG mensual, balance mes a mes (con comprobación de cuadre), gráficos, sobres de presupuesto y cuadre con el saldo real de los bancos.
+- **Informes**: libro diario, libro mayor (cuentas en T y mayor de cada cuenta con su contrapartida), PyG, balance, cierre de saldos con correcciones automáticas y reporte ejecutivo mensual imprimible (2 páginas A4).
+- **Gráficos** (icono de la barra superior): periodos libres (semana, mes, trimestre, año, fechas a medida), filtros por categoría, banco e imprevistos, y comparación con el periodo anterior.
+- **Inversiones** (icono de la barra superior): seguimiento de posiciones abiertas y vendidas con beneficio, rentabilidad, rentabilidad anualizada y TIR.
 - **Automatizaciones**: gastos recurrentes, amortización de activos y cuotas de hipoteca (separa intereses 662 y capital 170). Se generan solas al abrir la app.
 - **Datos**: todo vive en tu Google Drive. La app solo pide el permiso `drive.file`, así que solo ve la hoja que ella misma crea.
 
@@ -51,6 +53,7 @@ El ID de cliente es público por diseño: sin iniciar sesión con tu cuenta de G
 | Reparto | Plantilla de reparto mensual (cuenta destino e importe) |
 | RepartoMes | Copia del reparto de un mes concreto cuando se cambia o se ejecuta |
 | Saldos | Saldos reales anotados al cuadrar bancos |
+| Inversiones | Seguimiento de inversiones (fuera de la contabilidad) |
 | Config | Ajustes internos |
 
 Puedes editar la hoja a mano; los borrados desde la app son lógicos (columna `borrado`).
