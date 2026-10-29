@@ -545,3 +545,11 @@ p .tip-i { margin: 0 2px; cursor: default; }
 .bs-list li.bs-acc.tap:hover { background: var(--surface-2); }
 .bs-ic { width: 18px; text-align: center; font-size: 13px; }
 @media (max-width: 560px) { .bs-acc .ss-code, .bs-ic { display: none; } .bs-list li.bs-acc { padding-left: 8px; font-size: 12px; } .bs-list li { gap: 6px; } }
+
+/* campanita */
+.iconbtn.bell { position: relative; }
+.bell .badge { position: absolute; top: 0; right: 0; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--neg); color: #fff; font: 700 10px/16px system-ui, sans-serif; text-align: center; }
+.cf-list li { flex-wrap: wrap; }
+.cf-btns { display: flex; gap: 4px; }
+.cf-btns .btn { min-width: 34px; padding: 4px 8px; }
+@media (max-width: 520px) { .cf-btns { width: 100%; justify-content: flex-end; } }

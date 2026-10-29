@@ -2,7 +2,7 @@
 
 export const TABLES = {
   Cuentas: ['codigo', 'nombre', 'tipo', 'grupo', 'orden', 'activa'],
-  Diario: ['id', 'asiento', 'fecha', 'concepto', 'debe', 'haber', 'importe', 'clase', 'origen', 'notas', 'creado', 'borrado'],
+  Diario: ['id', 'asiento', 'fecha', 'concepto', 'debe', 'haber', 'importe', 'clase', 'origen', 'notas', 'creado', 'borrado', 'confirmado'],
   Recurrentes: ['id', 'nombre', 'dia', 'debe', 'haber', 'importe', 'clase', 'desde', 'hasta', 'activo'],
   Activos: ['id', 'nombre', 'cuenta', 'fecha_alta', 'valor', 'vida_meses', 'residual', 'activo'],
   Prestamos: ['id', 'nombre', 'capital', 'interes_anual', 'plazo_meses', 'primera_cuota', 'cuenta_banco', 'cuenta_pasivo', 'cuenta_interes', 'activo', 'participacion'],
@@ -453,6 +453,19 @@ export class Libro {
   }
 
   // ---------- automatizaciones ----------
+  // movimientos automáticos (recurrentes y préstamos) que aún no has confirmado que pasaron de verdad
+  porConfirmar(today = todayISO()) {
+    return this.activeRows.filter((r) => /^(rec|pres):/.test(r.origen || '') && !truthy(r.confirmado) && r.fecha <= today).sort((a, b) => a.fecha.localeCompare(b.fecha));
+  }
+  // si dos dispositivos generan a la vez el mismo automático, sobran copias: devuelve las que hay que borrar
+  duplicadosAuto() {
+    const seen = new Map(); const extra = [];
+    for (const r of this.activeRows) {
+      if (!/^(rec|pres|amort):/.test(r.origen || '')) continue;
+      if (seen.has(r.origen)) extra.push(r); else seen.set(r.origen, r);
+    }
+    return extra;
+  }
   pendientes(today = todayISO()) {
     const out = [];
     const origins = new Set(this.rows.map((r) => r.origen).filter(Boolean)); // incluye borrados: si borras uno generado, no vuelve

@@ -151,6 +151,8 @@ async function reload({ automations = false } = {}) {
       S.libro.set(await S.store.load());
       S.autoMsg = `${rows.length} asiento${rows.length > 1 ? 's' : ''} automático${rows.length > 1 ? 's' : ''} generado${rows.length > 1 ? 's' : ''} (recurrentes, amortizaciones o préstamos).`;
     }
+    const dup = S.libro.duplicadosAuto();
+    if (dup.length) { await S.store.update('Diario', dup.map((r) => ({ ...r, borrado: 1 }))); S.libro.set(await S.store.load()); }
     await migrar();
   }
 }
@@ -332,6 +334,29 @@ function renderReconnect() {
   });
 }
 
+// ---------------- campanita: confirmar lo automático ----------------
+function abrirConfirmar() {
+  const L = S.libro; const list = L.porConfirmar();
+  const li = (r) => `<li data-c="${esc(r.id)}"><span class="pk-ic">${emojiFor(L.byCode[L.tipo(r.debe) === 'gasto' ? r.debe : L.tipo(r.haber) === 'ingreso' ? r.haber : r.debe])}</span>
+    <div class="grow"><div class="t">${esc(r.concepto)}</div><div class="s">${esc(shortDate(r.fecha))} · ${esc(L.nombre(L.tipo(r.haber) === 'ingreso' ? r.debe : r.haber))}</div></div>
+    <div class="amount ${amountCls(r, L)}">${eur(r.importe)}</div>
+    <div class="cf-btns"><button class="btn sm primary" data-ok="${esc(r.id)}" title="Sí, pasó así">✓</button><button class="btn sm" data-ed="${esc(r.id)}" title="Cambiar importe o fecha">✎</button><button class="btn sm" data-no="${esc(r.id)}" title="No pasó">✕</button></div></li>`;
+  openModal(`<h2>Por confirmar</h2>
+    <p class="small muted" style="margin-top:-4px">Lo que Financito apuntó solo (nóminas, recibos, cuotas). Confírmalo cuando lo veas en el banco: ✓ si fue así, ✎ si cambió el importe o el día, ✕ si no pasó. Mientras tanto se queda aquí.</p>
+    ${list.length ? `<ul class="list cf-list">${list.map(li).join('')}</ul><div class="actions"><button class="btn" data-cancel>Cerrar</button><button class="btn primary" id="cfall">Confirmar todo (${list.length})</button></div>` : '<div class="empty">Todo confirmado 🎉</div><div class="actions"><button class="btn" data-cancel>Cerrar</button></div>'}`, (m) => {
+    $('[data-cancel]', m).onclick = closeModal;
+    const rowOf = (id) => L.rows.find((x) => String(x.id) === String(id));
+    const save = async (rows) => { try { await S.store.update('Diario', rows); await reload(); closeModal(); render(); if (S.libro.porConfirmar().length) abrirConfirmar(); } catch (e) { fail(e); } };
+    $$('[data-ok]', m).forEach((b) => { b.onclick = () => save([{ ...rowOf(b.dataset.ok), confirmado: 1 }]); });
+    $$('[data-no]', m).forEach((b) => { b.onclick = () => save([{ ...rowOf(b.dataset.no), borrado: 1 }]); });
+    $$('[data-ed]', m).forEach((b) => { b.onclick = () => { const r = rowOf(b.dataset.ed);
+      formModal({ title: r.concepto, fields: [{ key: 'importe', label: 'Importe real €', type: 'number', required: true }, { key: 'fecha', label: 'Fecha real', type: 'date', required: true }],
+        values: { importe: r.importe, fecha: r.fecha }, saveLabel: 'Guardar y confirmar',
+        onSave: async (d) => { await S.store.update('Diario', [{ ...r, ...d, importe: round2(num(d.importe)), confirmado: 1 }]); await reload(); } }); }; });
+    $('#cfall', m)?.addEventListener('click', () => save(list.map((r) => ({ ...rowOf(r.id), confirmado: 1 }))));
+  });
+}
+
 // ---------------- router ----------------
 const ROUTES = { inicio: viewInicio, mes: viewMes, apuntar: viewApuntar, diario: viewDiario, informes: viewInformes, ajustes: viewAjustes, graficos: viewGraficos, inversiones: viewInversiones };
 function render() {
@@ -339,7 +364,8 @@ function render() {
   const r = (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'inicio';
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.r === r));
   $('#title').textContent = { inicio: 'Financito', mes: 'Mes', apuntar: 'Apuntar', diario: 'Movimientos', informes: 'Informes', ajustes: 'Ajustes', graficos: 'Gráficos', inversiones: 'Inversiones' }[r] || 'Financito';
-  $('#topbar-actions').innerHTML = `${S.store.kind === 'demo' ? '<span class="chip">demo</span>' : ''}<a href="#/inversiones" class="iconbtn ${r === 'inversiones' ? 'on' : ''}" aria-label="Inversiones" title="Inversiones"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></a><a href="#/graficos" class="iconbtn ${r === 'graficos' ? 'on' : ''}" aria-label="Gráficos" title="Gráficos"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></a><a href="#/ajustes" class="iconbtn ${r === 'ajustes' ? 'on' : ''}" aria-label="Ajustes">⚙</a>`;
+  $('#topbar-actions').innerHTML = `${S.store.kind === 'demo' ? '<span class="chip">demo</span>' : ''}<a href="#/inversiones" class="iconbtn ${r === 'inversiones' ? 'on' : ''}" aria-label="Inversiones" title="Inversiones"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></a><a href="#/graficos" class="iconbtn ${r === 'graficos' ? 'on' : ''}" aria-label="Gráficos" title="Gráficos"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></a><button class="iconbtn bell" id="bell" aria-label="Por confirmar" title="Automáticos por confirmar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>${(() => { const n = S.libro.porConfirmar().length; return n ? `<span class="badge">${n}</span>` : ''; })()}</button><a href="#/ajustes" class="iconbtn ${r === 'ajustes' ? 'on' : ''}" aria-label="Ajustes">⚙</a>`;
+  $('#bell').onclick = abrirConfirmar;
   view().classList.toggle('wide', ['graficos', 'informes', 'inversiones'].includes(r));
   (ROUTES[r] || viewInicio)();
   view().focus({ preventScroll: true });
@@ -1783,8 +1809,8 @@ function viewAjustes() {
       <button class="btn block" id="addrec" style="margin-top:8px">Añadir automatización</button>
       <p class="small muted">Cada mes, al abrir la app, se apuntan solas las que toquen. Si borras una generada, no se vuelve a crear.</p></div>
 
-    <h2>Activos que se amortizan</h2>
-    <div class="card"><ul class="list">${act.map((a) => { const am = L.activeRows.filter((r) => r.origen?.startsWith(`amort:${a.id}:`)).reduce((s, r) => s + r.importe, 0); return `<li class="tap" data-act="${esc(a.id)}"><div class="grow"><div class="t">${esc(a.nombre)}</div><div class="s">${eur(num(a.valor))} · ${Math.round(num(a.vida_meses) / 12 * 10) / 10} años · amortizado ${eur(am)}</div><div class="bar"><span style="width:${Math.min(100, am / Math.max(1, num(a.valor) - num(a.residual)) * 100)}%"></span></div></div></li>`; }).join('') || '<li class="muted">Ninguno. Se crean al apuntar una «Compra de activo» marcando «Amortizar».</li>'}</ul>
+    <h2>Bienes</h2>
+    <div class="card"><ul class="list">${act.map((a) => { const am = L.activeRows.filter((r) => r.origen?.startsWith(`amort:${a.id}:`)).reduce((s, r) => s + r.importe, 0); return `<li class="tap" data-act="${esc(a.id)}"><div class="grow"><div class="t">${esc(a.nombre)}</div><div class="s">${eur(num(a.valor))}${num(a.vida_meses) ? ` · ${Math.round(num(a.vida_meses) / 12 * 10) / 10} años · amortizado ${eur(am)}` : ` · ${esc(L.nombre(String(a.cuenta)))} · sin amortizar`}</div>${num(a.vida_meses) ? `<div class="bar"><span style="width:${Math.min(100, am / Math.max(1, num(a.valor) - num(a.residual)) * 100)}%"></span></div>` : ''}</div></li>`; }).join('') || '<li class="muted">Ninguno. Se crean al apuntar una «Compra de activo» marcando «Amortizar».</li>'}</ul>
       <button class="btn block" id="addact" style="margin-top:8px">Añadir activo</button></div>
 
     <h2>Hipoteca y préstamos</h2>
@@ -1888,7 +1914,7 @@ function editActivo(id) {
     { key: 'cuenta', label: 'Tipo de bien', type: 'account', filter: (c) => kindOf(c) === 'bien', createKind: 'bien', required: true },
     { key: 'fecha_alta', label: 'Fecha de compra', type: 'date', required: true },
     { key: 'valor', label: 'Valor de compra €', type: 'number', required: true },
-    { key: 'vida_meses', label: 'Vida útil (meses)', type: 'number', required: true, hint: '36 = 3 años' },
+    { key: 'vida_meses', label: 'Vida útil (meses)', type: 'number', hint: '36 = 3 años. Déjalo vacío o a 0 si no quieres amortizarlo.' },
     { key: 'residual', label: 'Valor residual €', type: 'number' },
     { key: 'activo', label: 'Amortizando', type: 'checkbox' },
   ];
