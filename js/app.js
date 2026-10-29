@@ -604,7 +604,12 @@ function viewMes() {
       return `<li class="tap" data-line="${esc(l.linea)}"><span class="pk-ic">${emojiFor(L.byCode[l.code])}</span><div class="grow"><div class="t">${esc(l.nombre)} ${tick(l.hecho, l.plan)}</div><div class="s">${sub}</div></div>${money(l.done ? l.real : l.plan)}</li>`;
     }).join('')}</ul>`;
   }).join('');
-  const fijosHtml = P.fijos.length ? `<ul class="list">${P.fijos.map((f) => `<li class="tap" ${f.prestamo ? `data-pre="${esc(f.prestamo.id)}"` : `data-fijo="${esc(f.id)}"`}><span class="pk-ic">${emojiFor(L.byCode[f.code])}</span><div class="grow"><div class="t">${esc(f.nombre)} ${f.activo ? tick(f.real > 0, f.plan) : '<span class="chip">pausada</span>'}${f.override !== null && !f.gen ? `<span class="chip">${f.override ? 'importe especial' : 'saltado'}</span>` : ''}</div><div class="s">${f.activo ? `día ${esc(f.dia || f.rec?.dia)} · se apunta solo` : 'tócala para activarla'}</div></div>${money(f.real || f.plan || num(f.rec?.importe))}</li>`).join('')}</ul>` : '<div class="empty">Sin gastos fijos. Se crean como automatizaciones.</div>';
+  const fijosHtml = P.fijos.length ? `<ul class="list">${P.fijos.map((f) => `<li class="tap" ${f.prestamo ? `data-pre="${esc(f.prestamo.id)}"` : `data-fijo="${esc(f.id)}"`}><span class="pk-ic">${emojiFor(L.byCode[f.code])}</span><div class="grow"><div class="t">${esc(f.nombre)} ${f.activo ? tick(f.real > 0, f.plan) : '<span class="chip">pausada</span>'}${f.override !== null && !f.gen ? `<span class="chip">${f.override ? 'importe especial' : 'saltado'}</span>` : ''}</div><div class="s">${f.activo ? `día ${esc(f.dia || f.rec?.dia)} · se apunta solo` : 'tócala para activarla'}</div></div>${money(f.real || f.plan || num(f.rec?.importe))}</li>`).join('')}</ul>` : (() => {
+    // si las automatizaciones empiezan más adelante, se dice cuándo y se puede saltar a ese mes
+    const prox = (L.db.Recurrentes || []).filter((r) => truthy(r.activo) && !String(r.nombre).endsWith('(borrada)') && (r.clase || 'corriente') === 'corriente' && L.tipo(String(r.debe)) === 'gasto' && String(r.desde).slice(0, 7) > m)
+      .map((r) => String(r.desde).slice(0, 7)).sort()[0];
+    return prox ? `<div class="empty">Tus gastos fijos automáticos empiezan en ${esc(mesLargo(prox))}.<br><button class="btn sm" id="goFijos" data-mes="${esc(prox)}" style="margin-top:8px">Ver ${esc(MESES_LARGOS_MES(prox))} ›</button></div>` : '<div class="empty">Sin gastos fijos. Se crean como automatizaciones.</div>';
+  })();
   const limites = L.presupuesto(m).filter((p) => L.kind(p.code) === 'gasto');
 
   view().innerHTML = `${periodBar(viewMes, { allowYear: false })}
@@ -646,6 +651,7 @@ function viewMes() {
   $('#addLine').onclick = () => editLinea(null, 'reparto');
   $('#addFijo').onclick = () => editRecurrente(null);
   $('#cfgMes').onclick = cfgMes;
+  $('#goFijos')?.addEventListener('click', (e) => { S.mes = e.currentTarget.dataset.mes; S.year = Number(S.mes.slice(0, 4)); viewMes(); });
   $('#doRep')?.addEventListener('click', hacerReparto);
   $('#undo')?.addEventListener('click', deshacerReparto);
   $('#addcat').onclick = () => editSobre(null, 'gasto');
