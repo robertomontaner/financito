@@ -1227,7 +1227,7 @@ const RANGOS = [
   ['7d', '7 días'], ['semana', 'Esta semana'], ['mes', 'Este mes'], ['mespasado', 'Mes pasado'], ['30d', '30 días'],
   ['trim', 'Trimestre'], ['3m', '3 meses'], ['ano', 'Este año'], ['12m', '12 meses'], ['todo', 'Todo'], ['custom', 'Elegir fechas'],
 ];
-S.g ??= { r: 'mes', off: 0, from: '', to: '', cat: '', banco: '', imp: false };
+S.g ??= { r: 'mes', off: 0, from: '', to: '', cat: '', banco: '', imp: false, rep: true };
 
 // rango [from, to] del preset con desplazamiento (‹ ›)
 function gRange() {
@@ -1355,7 +1355,7 @@ async function viewGraficos() {
       <div class="card span2"><div class="row between"><h3>Entra y sale</h3><span class="small muted">por ${'<span id="gunit"></span>'}</span></div><div class="chartbox"><canvas id="g1"></canvas></div></div>
       <div class="card"><h3>En qué se va</h3>${porCat.length ? hbars(porCat, G, groupSum(prev.gastos, 'code'), 'data-cat') : '<div class="empty">Sin gastos en este periodo.</div>'}<p class="small muted" style="margin-bottom:0">Toca una categoría para filtrar todo por ella. ▲▼ = vs periodo anterior.</p></div>
       <div class="card"><h3>Tipo de gasto</h3><div class="chartbox"><canvas id="g2"></canvas></div></div>
-      <div class="card"><h3>Ahorro acumulado</h3><div class="chartbox sm"><canvas id="g3"></canvas></div></div>
+      <div class="card"><div class="row between"><h3>Ahorro acumulado</h3><button class="gchip sel ${g.rep !== false ? 'on' : ''}" data-rep aria-pressed="${g.rep !== false}" title="Reparte por días los ingresos y los gastos fijos de cada mes">${g.rep !== false ? '✓ ' : ''}Repartido por días</button></div><div class="chartbox sm"><canvas id="g3"></canvas></div><p class="small muted" style="margin-bottom:0">${g.rep !== false ? 'Ingresos y fijos repartidos por igual entre los días del mes; el resto, el día que pasó. Así se ve el ritmo, sin el salto del día de cobro.' : 'Cada movimiento el día que pasó: sube de golpe el día que cobras.'}</p></div>
       <div class="card"><div class="row between"><h3>Invertido</h3><strong>${eur(L.invertido(from, to), 0)}</strong></div><div class="chartbox sm"><canvas id="g6"></canvas></div><p class="small muted" style="margin-bottom:0">Dinero nuevo metido en tus cuentas de inversión (sin contar revalorizaciones)${I > 0 ? ` · ${fmt((L.invertido(from, to) / I) * 100, 0)} % de lo que entra` : ''}.</p></div>
       <div class="card"><h3>Desde dónde pagas</h3>${porBanco.length ? hbars(porBanco, G, groupSum(prev.gastos, 'banco'), 'data-banco') : '<div class="empty">—</div>'}</div>
       <div class="card"><h3>Qué día gastas más</h3><div class="chartbox sm"><canvas id="g4"></canvas></div><p class="small muted" style="margin-bottom:0">Media por día de la semana.</p></div>
@@ -1372,6 +1372,7 @@ async function viewGraficos() {
   $('#gf')?.addEventListener('change', (e) => { g.from = e.target.value; viewGraficos(); });
   $('#gt')?.addEventListener('change', (e) => { g.to = e.target.value; viewGraficos(); });
   $('[data-imp]').onclick = () => { g.imp = !g.imp; viewGraficos(); };
+  $('[data-rep]').onclick = () => { g.rep = g.rep === false; viewGraficos(); };
   $('[data-clear]')?.addEventListener('click', () => { g.cat = ''; g.banco = ''; g.imp = false; viewGraficos(); });
   $$('[data-pick]', view()).forEach((b) => {
     b.onclick = () => {
@@ -1402,7 +1403,15 @@ async function viewGraficos() {
   const BLQ = [['fijos', 'Fijos', S1[0]], ['variables', 'Variables', S1[2]], ['imprevistos', 'Imprevistos', S1[1]], ['financieros', 'Hipoteca y otros', S1[6]]];
   const blqData = BLQ.map(([k, l, c]) => bar(l, B.map((b) => round2(cur.gastos.filter((x) => x.bloque === k && inB(b, x.r.fecha)).reduce((s, x) => s + x.v, 0))), c, { borderColor: v.surface, borderWidth: { top: 2 }, borderRadius: 0 })).filter((d) => d.data.some((x) => x));
   S.charts.push(new Chart($('#g2'), { type: 'bar', data: { labels, datasets: blqData }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend, tooltip: money }, scales: { x: { ...xAxis, stacked: true }, y: { ...yAxis, stacked: true } } } }));
-  let acc = 0; const accData = B.map((b, i) => (b.a > hoy ? null : (acc = round2(acc + iB[i] - gB[i]))));
+  // ahorro por tramo: con «repartido», ingresos y fijos se prorratean entre los días de su mes (dentro del rango), para que no salte el día de cobro
+  const mensual = (x, ing) => ing || x.bloque === 'fijos' || x.bloque === 'financieros';
+  const tramo = (b, x, ing) => {
+    if (g.rep === false || !mensual(x, ing)) return inB(b, x.r.fecha) ? x.v : 0;
+    const m = ym(x.r.fecha); const a = `${m}-01` < from ? from : `${m}-01`; const z = endOfMonth(m) > to ? to : endOfMonth(m);
+    const ia = b.a > a ? b.a : a; const iz = b.b < z ? b.b : z;
+    return iz < ia ? 0 : (x.v * daysBetween(ia, iz)) / daysBetween(a, z);
+  };
+  let acc = 0; const accData = B.map((b) => (b.a > hoy ? null : (acc = round2(acc + cur.ingresos.reduce((s2, x) => s2 + tramo(b, x, true), 0) - cur.gastos.reduce((s2, x) => s2 + tramo(b, x, false), 0)))));
   S.charts.push(new Chart($('#g3'), { type: 'line', data: { labels, datasets: [{ label: 'Ahorro acumulado', data: accData, borderColor: S1[2], backgroundColor: 'transparent', borderWidth: 2, tension: 0.25, pointRadius: B.length > 20 ? 0 : 4, pointHoverRadius: 5, pointBackgroundColor: S1[2], pointBorderColor: v.surface, pointBorderWidth: 2 }] }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend: { display: false }, tooltip: money }, scales: { x: xAxis, y: yAxis } } }));
   S.charts.push(new Chart($('#g6'), { type: 'bar', data: { labels, datasets: [bar('Invertido', B.map((b) => (b.a > hoy ? null : L.invertido(b.a, b.b))), S1[2])] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: money }, scales: { x: xAxis, y: yAxis } } }));
   const DOW = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']; const cnt = Array(7).fill(0); const tot = Array(7).fill(0);

@@ -79,7 +79,7 @@ Las líneas son aproximadas. Busca por el nombre de la función.
     - barras de ingresos y gastos;
     - «En qué se va» con barras HTML que filtran al tocar;
     - tipo de gasto apilado;
-    - ahorro acumulado;
+    - ahorro acumulado, con «Repartido por días» activado por defecto (`g.rep`): ingresos y fijos se prorratean entre los días de su mes para que no salte el día de cobro;
     - desde dónde pagas;
     - día de la semana;
     - mayores gastos;
