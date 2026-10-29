@@ -101,7 +101,8 @@ Las líneas son aproximadas. Busca por el nombre de la función.
   - **Datos:**
     - `apertura`: saldos iniciales, que fijan Config `inicio`;
     - plan contable avanzado (`editCuenta`);
-    - importar y exportar JSON (`importar`, `exportar`).
+    - importar y exportar JSON (`importar`, `exportar`). El JSON de importación admite `Cuentas`, `Diario`, `Activos`, `Inversiones`, `Recurrentes` (por id: actualiza o añade) y `Config` (objeto clave → valor).
+- **Campanita** (`abrirConfirmar`, `Libro.porConfirmar`): los movimientos generados por recurrentes y préstamos quedan pendientes (`Diario.confirmado` vacío) hasta que el usuario los confirma, edita o descarta. `Libro.duplicadosAuto` borra copias si dos dispositivos generan el mismo automático.
 
 ## Modelo de datos (pestañas de la hoja = `TABLES` en model.js)
 
@@ -188,10 +189,7 @@ Hacer push a `main` en `robertomontaner/financito`; GitHub Pages despliega en un
 
 ## Pendiente o ideas
 
-1. **Reset de ingresos y gastos.** El usuario pasará los datos completos de 2025 y 2026 para hacer un borrón y cuenta nueva del Diario y reimportarlo limpio con Ajustes → Importar, con JSON `{ "Diario": [...] }`.
-   - Hay que mapear cada gasto a su banco real, porque los que no tienen banco caen en 119.
-   - Después habrá que fijar los saldos iniciales.
-   - Datos actuales sospechosos: Revolut Ana tenía un saldo negativo porque faltan entradas, y hay 7 extraordinarios contra 119.
+1. **Histórico 2021-2026 y saldos iniciales (29/10/2026)**: preparados en un JSON fuera del repo (datos personales) a partir de su Excel IG_26; el usuario lo importa desde Ajustes. Todo lo anterior al 29/10/2026 va contra 119 (solo PyG). Faltan los gastos de bolsillos de enero a marzo de 2026 (no existen). Pendiente: alta de sus fondos de inversión en la sección Inversiones y mover Mediolanum → Ibercaja con el asistente cuando termine la migración.
 2. Opcional: un login con Apps Script y contraseña propia.
 3. Opcional: provisión de imprevistos.
 4. Opcional: una tarea programada que genere o envíe el reporte del mes anterior cada día 1.

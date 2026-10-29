@@ -2015,10 +2015,25 @@ async function importar(e) {
     const cuentas = (data.Cuentas || []).filter((c) => !L.byCode[String(c.codigo)]).map((c) => ({ ...c, codigo: String(c.codigo) }));
     const existing = new Set(L.rows.map((r) => String(r.id)));
     const diario = (data.Diario || []).filter((r) => !existing.has(String(r.id))).map((r) => ({ id: r.id || uid(), asiento: r.asiento || uid(), origen: r.origen || 'importado', creado: todayISO(), borrado: '', notas: '', ...r, importe: round2(num(r.importe)) }));
-    if (!confirm(`Importar ${diario.length} movimientos${cuentas.length ? ` y ${cuentas.length} cuentas nuevas` : ''}?`)) return;
+    // además de movimientos y cuentas, el fichero puede traer bienes, automatizaciones (por id: se actualizan o se añaden), inversiones y ajustes
+    const byId = (t) => new Map((L.db[t] || []).map((x) => [String(x.id), x]));
+    const actIds = byId('Activos'); const invIds = byId('Inversiones'); const recIds = byId('Recurrentes');
+    const activos = (data.Activos || []).filter((x) => !actIds.has(String(x.id)));
+    const inversiones = (data.Inversiones || []).filter((x) => !invIds.has(String(x.id)));
+    const recUpd = (data.Recurrentes || []).filter((x) => recIds.has(String(x.id))).map((x) => ({ ...recIds.get(String(x.id)), ...x }));
+    const recNew = (data.Recurrentes || []).filter((x) => !recIds.has(String(x.id)));
+    const cfg = Object.entries(data.Config || {});
+    const partes = [`${diario.length} movimientos`, cuentas.length && `${cuentas.length} cuentas nuevas`, activos.length && `${activos.length} bienes`,
+      (recUpd.length + recNew.length) && `${recUpd.length + recNew.length} automatizaciones`, inversiones.length && `${inversiones.length} inversiones`, cfg.length && 'ajustes'].filter(Boolean);
+    if (!confirm(`Importar ${partes.join(', ')}?`)) return;
     if (cuentas.length) await S.store.add('Cuentas', cuentas);
     for (let i = 0; i < diario.length; i += 400) await S.store.add('Diario', diario.slice(i, i + 400));
-    await reload(); toast(`Importados ${diario.length} movimientos`); render();
+    if (activos.length) await S.store.add('Activos', activos);
+    if (inversiones.length) await S.store.add('Inversiones', inversiones);
+    if (recUpd.length) await S.store.update('Recurrentes', recUpd);
+    if (recNew.length) await S.store.add('Recurrentes', recNew);
+    for (const [k, v] of cfg) await setConfig(k, v);
+    await reload(); toast(`Importado: ${partes.join(', ')}`); render();
   } catch (err) { fail(err); } finally { e.target.value = ''; }
 }
 function exportar() {
