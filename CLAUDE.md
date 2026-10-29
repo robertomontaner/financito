@@ -64,7 +64,7 @@ Las líneas son aproximadas. Busca por el nombre de la función.
     - Debajo, tabla con saldo acumulado.
   - `asientoTip` y `bindTips`: tooltip ⓘ con el asiento completo, marcando Balance o PyG y el sentido (`AREA`, `MOVE`).
   - `infPyG`: bloques fijos, variables, imprevistos y financieros, más la fila «Ahorro sin imprevistos». Debajo, «Qué has hecho con tu ahorro» (`aplicacionHtml`, con `Libro.aplicacion(from, to)`): el resultado repartido en inversiones, fondo, bancos, bienes, deudas y sin banco. Cuadra siempre con ingresos − gastos; si el resultado es negativo, la línea de bancos sale en negativo (sale de ahorros anteriores).
-  - `infBalance`: arriba el balance de situación en dos mitades (`balanceSheetHtml`): activo | pasivo + patrimonio neto. Debajo, la tabla mes a mes.
+  - `infBalance`: arriba el balance de situación en dos mitades (`balanceSheetHtml`): activo | pasivo + patrimonio neto, con bloques por grupo y el desglose de cada cuenta (el PN se desglosa en patrimonio inicial y ahorro acumulado). Tocar una cuenta abre su mayor. Debajo, la tabla mes a mes.
   - PyG y Balance llevan € y la cruz de lectura `crosshair` al pasar el ratón.
   - **Invertido:** las cuentas con grupo «Inversiones» (`Libro.isInv`; se marcan en Ajustes → cuenta → Tipo «Inversión») cuentan como inversión. `Libro.invertido(from, to)` suma el dinero nuevo traspasado a ellas, sin revalorizaciones. Sale en Inicio, PyG, Gráficos y el reporte. Lo que se mete a invertir es un traspaso, nunca un gasto.
   - `infCuadre`: «Cierre de saldos». El usuario mete el saldo real de cada banco y se crea un asiento de corrección contra 659/759, o 663/763 en inversiones.

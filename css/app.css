@@ -538,3 +538,10 @@ p .tip-i { margin: 0 2px; cursor: default; }
 .bs-sw { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 10px; background: var(--line); }
 .bs-tot { display: flex; justify-content: space-between; border-top: 2px solid var(--text); margin-top: 6px; padding-top: 6px; font-size: 14px; }
 @media (max-width: 560px) { .bs-cols > div { padding: 0 8px; } .bs-h small { display: block; margin: 0; } .bs-list { font-size: 12.5px; } }
+.bs-list li.bs-g { font-weight: 650; padding-top: 8px; }
+.bs-list li.bs-acc { padding: 3px 0 3px 18px; color: var(--muted); font-size: 13px; }
+.bs-list li.bs-acc .grow { color: var(--text); }
+.bs-list li.bs-acc.tap { cursor: pointer; border-radius: 6px; }
+.bs-list li.bs-acc.tap:hover { background: var(--surface-2); }
+.bs-ic { width: 18px; text-align: center; font-size: 13px; }
+@media (max-width: 560px) { .bs-acc .ss-code, .bs-ic { display: none; } .bs-list li.bs-acc { padding-left: 8px; font-size: 12px; } .bs-list li { gap: 6px; } }

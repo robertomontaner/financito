@@ -1068,19 +1068,24 @@ function dondeAhorroHtml(m) {
 // balance de situación en dos mitades: activo | pasivo + patrimonio neto
 function balanceSheetHtml(b) {
   const L = S.libro; const v = vizMode();
-  const sumBy = (list) => { const o = {}; list.forEach((x) => { const c = L.byCode[x.code]; const g = L.isInv(x.code) ? 'Inversiones' : (displayGroup(c) || x.grupo); o[g] = (o[g] || 0) + x.saldo; }); return Object.entries(o).filter(([, s2]) => Math.abs(s2) > 0.5).sort((a, b2) => b2[1] - a[1]); };
-  const act = sumBy(b.activo); const pas = sumBy(b.pasivo); const pn = b.patrimonioNeto;
+  const grpOf = (x) => (L.isInv(x.code) ? 'Inversiones' : (displayGroup(L.byCode[x.code]) || x.grupo));
+  // grupos con su desglose por cuenta: [grupo, total, color, [{code, nombre, saldo}]]
+  const build = (list) => { const o = {}; list.filter((x) => Math.abs(x.saldo) > 0.5).forEach((x) => { (o[grpOf(x)] ??= []).push(x); });
+    return Object.entries(o).map(([g, l]) => [g, round2(l.reduce((s2, x) => s2 + x.saldo, 0)), l.sort((p1, p2) => p2.saldo - p1.saldo)]).filter(([, t]) => Math.abs(t) > 0.5).sort((p1, p2) => p2[1] - p1[1]); };
+  const act = build(b.activo); const pas = build(b.pasivo); const pn = b.patrimonioNeto;
   const COL = { 'Bancos y efectivo': v.s[0], Inversiones: v.s[2], Bienes: v.s[3] };
-  const colA = (g, i) => COL[g] || v.s[[4, 6, 7][i % 3]];
+  const A = act.map(([g, val, l], i) => [g, val, COL[g] || v.s[[4, 6, 7][i % 3]], l]);
+  // patrimonio neto: lo que pusiste al empezar + lo que has ahorrado desde entonces
+  const pnDet = [...b.pn.filter((x) => Math.abs(x.saldo) > 0.5).map((x) => ({ code: x.code, nombre: x.nombre, saldo: x.saldo })), ...(Math.abs(b.resultado) > 0.5 ? [{ code: '', nombre: 'Ahorro acumulado (resultados)', saldo: b.resultado }] : [])];
+  const P = [...pas.map(([g, val, l]) => [g, val, v.s[1], l]), ['Patrimonio neto', pn, v.s[6], pnDet]];
   const tot = Math.max(b.totalActivo, b.totalPasivo + Math.max(pn, 0), 1);
-  const blocks = (items) => items.map(([g, val, col]) => `<div class="bs-blk" style="flex-grow:${Math.max(val, 0)};background:${col}" title="${esc(g)}: ${eur(val, 0)}"><span>${val / tot > 0.12 ? `${esc(g)}<b>${eur(val, 0)}</b>` : ''}</span></div>`).join('');
-  const rows = (items) => items.map(([g, val, col]) => `<li><span class="bs-sw" style="background:${col}"></span><span class="grow">${esc(g)}</span><strong>${eur(val, 0)}</strong></li>`).join('');
-  const A = act.map(([g, val], i) => [g, val, colA(g, i)]);
-  const P = [...pas.map(([g, val]) => [g, val, v.s[1]]), ...(pn > 0 ? [['Patrimonio neto', pn, v.s[6]]] : [])];
+  const blocks = (items) => items.filter(([, val]) => val > 0).map(([g, val, col]) => `<div class="bs-blk" style="flex-grow:${val};background:${col}" title="${esc(g)}: ${eur(val, 0)}"><span>${val / tot > 0.12 ? `${esc(g)}<b>${eur(val, 0)}</b>` : ''}</span></div>`).join('');
+  const rows = (items) => items.map(([g, val, col, l]) => `<li class="bs-g"><span class="bs-sw" style="background:${col}"></span><span class="grow">${esc(g)}</span><strong class="${val < 0 ? 'neg' : ''}">${eur(val, 0)}</strong></li>
+    ${l.map((x) => `<li class="bs-acc ${x.code ? 'tap' : ''}" ${x.code ? `data-acc="${esc(x.code)}"` : ''}><span class="bs-ic">${x.code ? emojiFor(L.byCode[x.code]) : '💶'}</span><span class="grow">${esc(x.nombre)}${x.code ? ` <span class="ss-code">${esc(x.code)}</span>` : ''}</span><span class="${x.saldo < 0 ? 'neg' : ''}">${eur(x.saldo, 0)}</span></li>`).join('')}`).join('');
   return `<div class="card bsheet"><div class="bs-cols">
       <div><div class="bs-h">Lo que tienes <small>activo</small></div><div class="bs-stack" style="height:${Math.max(40, (b.totalActivo / tot) * 200)}px">${blocks(A)}</div><ul class="bs-list">${rows(A)}</ul><div class="bs-tot"><span>Total activo</span><strong>${eur(b.totalActivo, 0)}</strong></div></div>
-      <div><div class="bs-h">Cómo se financia <small>pasivo + patrimonio neto</small></div><div class="bs-stack" style="height:${Math.max(40, ((b.totalPasivo + Math.max(pn, 0)) / tot) * 200)}px">${blocks(P)}</div><ul class="bs-list">${rows(P)}${pn <= 0 ? `<li><span class="bs-sw"></span><span class="grow">Patrimonio neto</span><strong class="neg">${eur(pn, 0)}</strong></li>` : ''}</ul><div class="bs-tot"><span>Total pasivo + PN</span><strong>${eur(b.totalPasivo + pn, 0)}</strong></div></div>
-    </div><p class="small muted" style="margin:8px 0 0">Las dos mitades suman lo mismo: todo lo que tienes es tuyo (patrimonio neto) o lo debes (pasivo).</p></div>`;
+      <div><div class="bs-h">Cómo se financia <small>pasivo + patrimonio neto</small></div><div class="bs-stack" style="height:${Math.max(40, ((b.totalPasivo + Math.max(pn, 0)) / tot) * 200)}px">${blocks(P)}</div><ul class="bs-list">${rows(P)}</ul><div class="bs-tot"><span>Total pasivo + PN</span><strong>${eur(b.totalPasivo + pn, 0)}</strong></div></div>
+    </div><p class="small muted" style="margin:8px 0 0">Las dos mitades suman lo mismo: todo lo que tienes es tuyo (patrimonio neto) o lo debes (pasivo). Toca una cuenta para ver su mayor.</p></div>`;
 }
 
 function needsApertura() {
@@ -1124,6 +1129,7 @@ function infBalance() {
     <p class="small muted">Saldos a final de mes${L.inicio ? `, contando desde tu apertura del ${esc(L.inicio)}` : ''}. La variación del patrimonio debería coincidir con tu ahorro del mes (más revalorizaciones).</p>`;
   $('#goap')?.addEventListener('click', () => { setTimeout(apertura, 50); });
   goAccount($('#inf')); crosshair($('#inf'));
+  $$('#inf li.bs-acc[data-acc]').forEach((li) => { li.onclick = () => { S.informe = 'mayor'; S.mayorCuenta = li.dataset.acc; viewInformes(); scrollTo(0, 0); }; });
 }
 
 // al pasar el ratón por una celda se sombrean su fila y su columna
