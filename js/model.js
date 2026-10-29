@@ -337,6 +337,7 @@ export class Libro {
     let s = 0;
     for (const r of this.activeRows) {
       if (r.fecha < from || r.fecha > to) continue;
+      if (r.clase === 'apertura') continue; // el saldo inicial es lo acumulado de antes, no dinero metido ese día (eso ya está en el histórico)
       const di = this.isInv(r.debe); const hi = this.isInv(r.haber);
       // desde cualquier cuenta de balance (bancos o, en el histórico, «sin cuenta»); nunca revalorizaciones de la PyG
       const bal = (c) => !['gasto', 'ingreso'].includes(this.tipo(c));
