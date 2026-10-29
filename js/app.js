@@ -401,7 +401,7 @@ function viewInicio() {
     ${S.autoMsg ? `<div class="banner">⚙ ${esc(S.autoMsg)}</div>` : ''}
     ${S.store.kind === 'demo' ? '<div class="banner warn">Estás en modo demo: los datos son de ejemplo y solo se guardan en este navegador.</div>' : ''}
     <h1 style="text-transform:capitalize">${esc(mesLargo(mes))}</h1>
-    ${(() => { const P = L.planMes(mes); if (!P.hasPlan && L.fuentePlan(mes)) return `<a class="banner" href="#/mes" style="display:block;text-decoration:none">📝 Prepara el plan de ${esc(MESES_LARGOS_MES(mes))}: copia el del mes anterior y ajústalo →</a>`; return P.pendientes.length ? `<a class="banner" href="#/mes" style="display:block;text-decoration:none">📬 Reparto de ${esc(MESES_LARGOS_MES(mes))} pendiente: ${P.pendientes.length} traspaso${P.pendientes.length > 1 ? 's' : ''} por ${eur(P.pendientes.reduce((s2, l) => s2 + l.plan, 0), 0)} →</a>` : ''; })()}
+    ${(() => { const P = L.planMes(mes); if (P.previo) return ''; if (!P.hasPlan && L.fuentePlan(mes)) return `<a class="banner" href="#/mes" style="display:block;text-decoration:none">📝 Prepara el plan de ${esc(MESES_LARGOS_MES(mes))}: copia el del mes anterior y ajústalo →</a>`; return P.pendientes.length ? `<a class="banner" href="#/mes" style="display:block;text-decoration:none">📬 Reparto de ${esc(MESES_LARGOS_MES(mes))} pendiente: ${P.pendientes.length} traspaso${P.pendientes.length > 1 ? 's' : ''} por ${eur(P.pendientes.reduce((s2, l) => s2 + l.plan, 0), 0)} →</a>` : ''; })()}
     <div class="kpis g4">
       <div class="kpi"><div class="lbl">Gasto corriente del mes</div><div class="val">${eur(g.total)}</div><div class="sub">${gp.total ? `${diff >= 0 ? '+' : ''}${eur(diff, 0)} vs ${MESES[Number(prev.slice(5)) - 1].toLowerCase()} (${eur(gp.total, 0)})` : 'sin imprevistos ni amortizaciones'}</div></div>
       <div class="kpi"><div class="lbl">Ingresos del mes</div><div class="val">${eur(ingresos, 0)}</div>${(() => { const res = round2(L.pyg(mes.slice(0, 4)).resultado[Number(mes.slice(5)) - 1]); return `<div class="sub">Resultado: <span class="${cls(res)}">${eur(res, 0)}</span></div>`; })()}</div>
@@ -569,9 +569,18 @@ function viewMes() {
   const money = (v) => `<span class="amount">${eur(v, Math.abs(v) % 1 ? 2 : 0)}</span>`;
   const tick = (ok, plan) => (ok ? '<span class="chip ok">✓ hecho</span>' : plan > 0 ? '<span class="chip">pendiente</span>' : '');
 
+  const fechaCorta = (d) => `${Number(d.slice(8, 10))}/${Number(d.slice(5, 7))}`;
+  const pendTotal = round2(P.pendientes.reduce((s2, l) => s2 + l.plan, 0));
+  const estadoHtml = {
+    previo: `<div class="mes-estado ok"><span class="me-ic">✓</span><div><strong>Traspasos de ${esc(MESES_LARGOS_MES(m))} hechos</strong><div class="small">Es anterior a la apertura del ${esc(fechaCorta(L.inicio))}: los hiciste en el banco y no hace falta apuntarlos.</div></div></div>`,
+    hecho: `<div class="mes-estado ok"><span class="me-ic">✓</span><div><strong>Traspasos de ${esc(MESES_LARGOS_MES(m))} hechos</strong>${P.fechaReparto ? `<div class="small">Apuntados el ${esc(fechaCorta(P.fechaReparto))}.</div>` : ''}</div><button class="btn sm" id="undo">Deshacer</button></div>`,
+    pendiente: `<div class="mes-estado pend"><span class="me-ic">⏳</span><div><strong>Traspasos de ${esc(MESES_LARGOS_MES(m))} pendientes</strong><div class="small">${P.pendientes.length} traspaso${P.pendientes.length > 1 ? 's' : ''} · ${eur(pendTotal, 0)}. Cuando los hagas en el banco, pulsa «Hacer reparto» abajo.</div></div></div>`,
+    sin: '',
+  }[P.estado];
+
   if (!P.hasPlan) {
     const src = L.fuentePlan(m);
-    view().innerHTML = `${periodBar(viewMes, { allowYear: false })}
+    view().innerHTML = `${periodBar(viewMes, { allowYear: false })}${P.previo ? estadoHtml : ''}
       <div class="card"><h2 style="margin-top:0">Plan de ${esc(mesLargo(m))}</h2>
         <p class="muted">Aquí decides qué ingresos esperas este mes y a qué cuentas mandas el dinero. Cada mes tiene su propio plan.</p>
         <div class="stack">
@@ -592,15 +601,14 @@ function viewMes() {
       let sub = '';
       if (g === 'sobre') { const q = round2((l.done ? l.real : l.plan) - l.gastado); sub = `gastado ${eur(l.gastado)} · <span class="${q < 0 ? 'neg' : ''}">${q < 0 ? `te pasas ${eur(-q)}` : `quedan ${eur(q)}`}</span>`; }
       if (g !== 'sobre' && L.inicio) sub = `saldo: ${eur(L.balanceToDate(l.code))}`;
-      return `<li class="tap" data-line="${esc(l.linea)}"><span class="pk-ic">${emojiFor(L.byCode[l.code])}</span><div class="grow"><div class="t">${esc(l.nombre)} ${tick(l.done, l.plan)}</div><div class="s">${sub}</div></div>${money(l.done ? l.real : l.plan)}</li>`;
+      return `<li class="tap" data-line="${esc(l.linea)}"><span class="pk-ic">${emojiFor(L.byCode[l.code])}</span><div class="grow"><div class="t">${esc(l.nombre)} ${tick(l.hecho, l.plan)}</div><div class="s">${sub}</div></div>${money(l.done ? l.real : l.plan)}</li>`;
     }).join('')}</ul>`;
   }).join('');
   const fijosHtml = P.fijos.length ? `<ul class="list">${P.fijos.map((f) => `<li class="tap" ${f.prestamo ? `data-pre="${esc(f.prestamo.id)}"` : `data-fijo="${esc(f.id)}"`}><span class="pk-ic">${emojiFor(L.byCode[f.code])}</span><div class="grow"><div class="t">${esc(f.nombre)} ${f.activo ? tick(f.real > 0, f.plan) : '<span class="chip">pausada</span>'}${f.override !== null && !f.gen ? `<span class="chip">${f.override ? 'importe especial' : 'saltado'}</span>` : ''}</div><div class="s">${f.activo ? `día ${esc(f.dia || f.rec?.dia)} · se apunta solo` : 'tócala para activarla'}</div></div>${money(f.real || f.plan || num(f.rec?.importe))}</li>`).join('')}</ul>` : '<div class="empty">Sin gastos fijos. Se crean como automatizaciones.</div>';
   const limites = L.presupuesto(m).filter((p) => L.kind(p.code) === 'gasto');
-  const doneAll = P.lines.length && !P.pendientes.length;
-  const pendTotal = round2(P.pendientes.reduce((s2, l) => s2 + l.plan, 0));
 
   view().innerHTML = `${periodBar(viewMes, { allowYear: false })}
+    ${estadoHtml}
     ${P.dupes ? `<div class="banner warn">Hay ${P.dupes} línea${P.dupes > 1 ? 's' : ''} repetida${P.dupes > 1 ? 's' : ''} en este mes. <button class="btn sm" id="dedupe" style="margin-left:6px">Juntarlas</button></div>` : ''}
     <div class="card"><div class="row between"><h3 style="margin:0">Ingresos</h3><span class="num"><strong>${eur(P.ingresosReal, 0)}</strong> <span class="muted small">de ${eur(P.ingresosPlan, 0)}</span></span></div>
       ${ingHtml}<button class="btn sm" id="addIng" style="margin-top:8px">+ Fuente de ingreso</button></div>
@@ -623,9 +631,7 @@ function viewMes() {
       ${L.inicio && principal ? `<div class="small muted" style="margin-top:6px">Saldo actual de ${esc(nPrin)}: <strong>${eur(L.balanceToDate(principal))}</strong></div>` : ''}
     </div>
 
-    ${P.lines.length ? (doneAll
-    ? `<div class="banner">✓ Reparto de ${esc(mesLargo(m))} hecho. <button class="btn sm" id="undo" style="margin-left:6px">Deshacer</button></div>`
-    : `<button class="btn primary block" id="doRep" style="margin:12px 0">Hacer reparto de ${esc(MESES_LARGOS_MES(m))} · ${P.pendientes.length} traspaso${P.pendientes.length > 1 ? 's' : ''} · ${eur(pendTotal, 0)}</button>`) : ''}
+    ${P.estado === 'pendiente' ? `<button class="btn primary block" id="doRep" style="margin:12px 0">Hacer reparto de ${esc(MESES_LARGOS_MES(m))} · ${P.pendientes.length} traspaso${P.pendientes.length > 1 ? 's' : ''} · ${eur(pendTotal, 0)}</button>` : ''}
 
     <details class="card"${limites.length ? ' open' : ''}><summary>Límites por categoría${limites.length ? ` (${limites.length})` : ''}</summary>
       <p class="small muted">Cuánto quieres gastar como máximo en cada cosa, la pagues desde donde la pagues.</p>

@@ -553,3 +553,13 @@ p .tip-i { margin: 0 2px; cursor: default; }
 .cf-btns { display: flex; gap: 4px; }
 .cf-btns .btn { min-width: 34px; padding: 4px 8px; }
 @media (max-width: 520px) { .cf-btns { width: 100%; justify-content: flex-end; } }
+
+/* Mes: estado de los traspasos del mes */
+.mes-estado { display: flex; align-items: center; gap: 12px; border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px; border: 1px solid var(--line); background: var(--surface); }
+.mes-estado > div { flex: 1; min-width: 0; }
+.mes-estado .small { color: var(--muted); margin-top: 2px; }
+.mes-estado .me-ic { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; flex: none; font-weight: 700; }
+.mes-estado.ok { background: var(--accent-soft); border-color: transparent; }
+.mes-estado.ok .me-ic { background: var(--accent); color: var(--surface); }
+.mes-estado.pend { border-left: 4px solid var(--warn); }
+.mes-estado.pend .me-ic { background: var(--surface-2); }

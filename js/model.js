@@ -277,9 +277,15 @@ export class Libro {
     const sum = (l, k) => round2(l.reduce((s, x) => s + x[k], 0));
     const tot = { fijosPlan: sum(fijos, 'plan'), fijosReal: sum(fijos, 'real'), repartoPlan: sum(lines, 'plan'), repartoReal: sum(lines, 'real') };
     const dupes = rows.length - new Set(rows.map((x) => String(x.hacia))).size;
+    // los meses que empiezan antes de la apertura ya se repartieron fuera de la app: se dan por hechos
+    const previo = !!this.inicio && `${m}-01` < this.inicio;
+    for (const l of lines) l.hecho = !!l.done || previo;
+    const pendientes = previo ? [] : lines.filter((l) => !l.done && l.plan > 0);
+    const hechos = lines.filter((l) => l.done).map((l) => l.done.fecha).sort();
     return {
       m, hasPlan, hasSnap: hasPlan, lines, ingresos, fijos, ingresosPlan, ingresosReal, dupes, ...tot,
-      pendientes: lines.filter((l) => !l.done && l.plan > 0),
+      previo, pendientes, fechaReparto: hechos[hechos.length - 1] || '',
+      estado: previo ? 'previo' : !lines.length ? 'sin' : !pendientes.length ? 'hecho' : 'pendiente',
       sobrantePlan: round2(ingresosPlan - tot.fijosPlan - tot.repartoPlan),
       sobranteReal: round2(ingresosReal - tot.fijosReal - tot.repartoReal),
     };

@@ -51,7 +51,7 @@ Las líneas son aproximadas. Busca por el nombre de la función.
   - `#view.wide` (1180 px) se usa en informes, gráficos e inversiones.
 - **Inicio:** `viewInicio`.
 - **Apuntar:** `viewApuntar` con plantillas de gasto (con casilla «Imprevisto»), ingreso, traspaso, compra de activo y libre. `editEntry` sirve para editar.
-- **Mes (plan de caja):** `viewMes`, `fijoMes` (importe especial solo para un mes), `copiarPlan`, `juntarRepetidas`, `editLinea`, `cfgMes`, `hacerReparto` y `deshacerReparto`.
+- **Mes (plan de caja):** `viewMes`, `fijoMes` (importe especial solo para un mes), `copiarPlan`, `juntarRepetidas`, `editLinea`, `cfgMes`, `hacerReparto` y `deshacerReparto`. Arriba sale el estado de los traspasos del mes (`planMes().estado`: `hecho`, `pendiente`, `sin` o `previo`); los meses que empiezan antes de `inicio` se dan por hechos, porque se repartieron fuera de la app.
 - **Movimientos:** `viewDiario`.
 - **Informes** (`INFORMES`, con ayuda plegable `INF_HELP`):
   - `infLibro`: libro diario; cada asiento es una fila: [fecha + concepto] | debe | haber, con etiqueta Balance o PyG y el sentido del movimiento (sin número de asiento, decisión del usuario).
