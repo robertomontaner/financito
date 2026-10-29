@@ -332,8 +332,10 @@ export class Libro {
     for (const r of this.activeRows) {
       if (r.fecha < from || r.fecha > to) continue;
       const di = this.isInv(r.debe); const hi = this.isInv(r.haber);
-      if (di && !hi && this.kind(r.haber) === 'dinero') s += r.importe;
-      if (hi && !di && this.kind(r.debe) === 'dinero') s -= r.importe;
+      // desde cualquier cuenta de balance (bancos o, en el histórico, «sin cuenta»); nunca revalorizaciones de la PyG
+      const bal = (c) => !['gasto', 'ingreso'].includes(this.tipo(c));
+      if (di && !hi && bal(r.haber)) s += r.importe;
+      if (hi && !di && bal(r.debe)) s -= r.importe;
     }
     return round2(s);
   }
