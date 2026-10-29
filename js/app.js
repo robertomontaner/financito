@@ -362,9 +362,10 @@ function viewInicio() {
     ${S.store.kind === 'demo' ? '<div class="banner warn">Estás en modo demo: los datos son de ejemplo y solo se guardan en este navegador.</div>' : ''}
     <h1 style="text-transform:capitalize">${esc(mesLargo(mes))}</h1>
     ${(() => { const P = L.planMes(mes); if (!P.hasPlan && L.fuentePlan(mes)) return `<a class="banner" href="#/mes" style="display:block;text-decoration:none">📝 Prepara el plan de ${esc(MESES_LARGOS_MES(mes))}: copia el del mes anterior y ajústalo →</a>`; return P.pendientes.length ? `<a class="banner" href="#/mes" style="display:block;text-decoration:none">📬 Reparto de ${esc(MESES_LARGOS_MES(mes))} pendiente: ${P.pendientes.length} traspaso${P.pendientes.length > 1 ? 's' : ''} por ${eur(P.pendientes.reduce((s2, l) => s2 + l.plan, 0), 0)} →</a>` : ''; })()}
-    <div class="kpis">
+    <div class="kpis g4">
       <div class="kpi"><div class="lbl">Gasto corriente del mes</div><div class="val">${eur(g.total)}</div><div class="sub">${gp.total ? `${diff >= 0 ? '+' : ''}${eur(diff, 0)} vs ${MESES[Number(prev.slice(5)) - 1].toLowerCase()} (${eur(gp.total, 0)})` : 'sin imprevistos ni amortizaciones'}</div></div>
-      <div class="kpi"><div class="lbl">Ingresos del mes</div><div class="val">${eur(ingresos, 0)}</div><div class="sub">Resultado: <span class="${cls(ingresos - g.total)}">${eur(round2(L.pyg(mes.slice(0, 4)).resultado[Number(mes.slice(5)) - 1]), 0)}</span></div></div>
+      <div class="kpi"><div class="lbl">Ingresos del mes</div><div class="val">${eur(ingresos, 0)}</div>${(() => { const res = round2(L.pyg(mes.slice(0, 4)).resultado[Number(mes.slice(5)) - 1]); return `<div class="sub">Resultado: <span class="${cls(res)}">${eur(res, 0)}</span></div>`; })()}</div>
+      <div class="kpi"><div class="lbl">Invertido este mes</div><div class="val">${eur(L.invertido(`${mes}-01`, `${mes}-31`), 0)}</div><div class="sub">${ingresos > 0 ? `${fmt((L.invertido(`${mes}-01`, `${mes}-31`) / ingresos) * 100, 0)} % de lo que entra` : 'a tus cuentas de inversión'}</div></div>
       <div class="kpi"><div class="lbl">Patrimonio neto</div><div class="val">${L.inicio ? eur(bal.patrimonioNeto, 0) : '—'}</div><div class="sub">${L.inicio ? 'lo que tienes − lo que debes' : 'falta meter saldos iniciales'}</div></div>
     </div>
 
@@ -1021,9 +1022,34 @@ function infPyG() {
       <tr class="tot"><td>Ahorro (resultado)</td>${cellsOf(p.resultado, cellNeg, false)}</tr>
       <tr class="dim"><td>Ahorro sin imprevistos</td>${cellsOf(p.resultado.map((v, i) => v + p.imprevistos[i]), cellNeg, false)}</tr>
     </table></div>
+    ${aplicacionHtml(isMes ? `${S.mes}-01` : `${S.year}-01-01`, isMes ? `${S.mes}-31` : `${S.year}-12-31`, isMes ? `en ${mesLargo(S.mes)}` : `en ${S.year}`)}
     ${isMes ? `<div class="kpis" style="margin-top:12px"><div class="kpi"><div class="lbl">Ahorro de ${esc(mesLargo(S.mes))}</div><div class="val ${cls(p.resultado[0])}">${eur(p.resultado[0], 0)}</div><div class="sub">ingresos − gastos</div></div><div class="kpi"><div class="lbl">Ingresos</div><div class="val">${eur(p.totalIngresos[0], 0)}</div></div><div class="kpi"><div class="lbl">Gastos</div><div class="val">${eur(p.totalGastos[0], 0)}</div><div class="sub">${p.imprevistos[0] ? `${eur(p.imprevistos[0], 0)} imprevistos` : 'sin imprevistos'}</div></div></div>` : ''}
     <p class="small muted">Toca una línea para ver sus movimientos. Los traspasos entre tus cuentas y las compras de bienes (piso, coche…) no aparecen aquí porque no son ni ingreso ni gasto.</p>`;
   goAccount($('#inf')); crosshair($('#inf'));
+}
+
+// «Qué has hecho con tu ahorro»: el resultado de la PyG repartido entre las cuentas de balance
+const APL = [
+  ['inversion', '📈', 'Inversiones', 'aportado + revalorización', 'sacado de inversiones'],
+  ['fondo', '🧰', 'Fondo de imprevistos', 'apartado', 'usado'],
+  ['bancos', '🏦', 'Bancos y efectivo', 'se queda en tus cuentas', 'sale de tus cuentas'],
+  ['bienes', '📦', 'Bienes', 'comprados', 'pierden valor (amortización)'],
+  ['deudas', '🏛️', 'Deudas', 'capital devuelto', 'deuda nueva'],
+  ['otros', '⚙️', 'Sin cuenta de banco', 'ajustes contables', 'gastos sin banco asignado (histórico)'],
+];
+function aplicacionHtml(from, to, label) {
+  const L = S.libro; const a = L.aplicacion(from, to); const inv = L.invertido(from, to);
+  const lines = APL.filter(([k]) => Math.abs(a[k]) > 0.5);
+  if (!lines.length) return '';
+  const res = a.total; const max = Math.max(...lines.map(([k]) => Math.abs(a[k])), 1);
+  const det = (k) => a.detalle.filter((x) => x.grupo === k).sort((x, y) => Math.abs(y.v) - Math.abs(x.v));
+  return `<div class="card apl"><div class="row between"><h3 style="margin:0">Qué has hecho con tu ahorro ${esc(label)}</h3><strong class="${cls(res)}">${eur(res, 0)}</strong></div>
+    <p class="small muted" style="margin:4px 0 10px">${res >= 0 ? 'Tu ahorro (ingresos − gastos) no desaparece: está en alguna de tus cuentas. Así se ha repartido:' : 'Has gastado más de lo que ha entrado. La diferencia ha salido de tus cuentas (y aun así puedes haber movido dinero a otras):'}</p>
+    ${lines.map(([k, ic, name, pos, neg]) => { const v = a[k]; const d = det(k); return `<details class="apl-row"><summary><span class="apl-name">${ic} ${esc(name)}<small>${esc(v >= 0 ? pos : neg)}${k === 'inversion' && Math.abs(inv) > 0.5 ? ` · aportado ${eur(inv, 0)}` : ''}</small></span>
+        <span class="apl-bar"><span class="apl-fill ${v < 0 ? 'neg' : ''}" style="width:${Math.max(2, (Math.abs(v) / max) * 100)}%"></span></span>
+        <span class="apl-v ${v < 0 ? 'neg' : ''}">${v > 0 ? '+' : ''}${eur(v, 0)}</span><span class="apl-pct">${res > 0 && v > 0 ? `${fmt((v / res) * 100, 0)} %` : ''}</span></summary>
+        ${d.length > 1 || (d[0] && d[0].nombre !== name) ? `<ul class="apl-det">${d.map((x) => `<li><span>${emojiFor(L.byCode[x.code])} ${esc(x.nombre)}</span><span class="${x.v < 0 ? 'neg' : ''}">${x.v > 0 ? '+' : ''}${eur(x.v, 0)}</span></li>`).join('')}</ul>` : ''}</details>`; }).join('')}
+    <div class="apl-tot"><span>Total = ahorro de la PyG</span><span>${eur(res, 0)} <b class="pos">✓</b></span></div></div>`;
 }
 
 function dondeAhorroHtml(m) {
@@ -1037,6 +1063,24 @@ function dondeAhorroHtml(m) {
     <p class="small muted" style="margin:4px 0 6px">Tu ahorro del mes (ingresos − gastos) es exactamente lo que han cambiado tus cuentas.</p>
     <ul class="list">${list.map((x) => `<li class="tap" data-acc="${esc(x.code)}"><span class="pk-ic">${emojiFor(L.byCode[x.code])}</span><div class="grow"><div class="t">${esc(x.nombre)}</div><div class="s">${desc(x)}</div></div><div class="amount ${cls(x.aporta)}">${x.aporta > 0 ? '+' : ''}${eur(x.aporta)}</div></li>`).join('')}</ul>
     ${Math.abs(total - ahorro) > 0.5 ? `<p class="small neg">No cuadra por ${eur(total - ahorro)}: revisa asientos de apertura o ajustes de este mes.</p>` : `<p class="small muted" style="margin-bottom:0">${Object.entries(list.reduce((a2, x) => { a2[x.kind] = (a2[x.kind] || 0) + x.aporta; return a2; }, {})).map(([k, v]) => `${eur(v, 0)} ${KL[k] || ''}`).join(' · ')}</p>`}</div>`;
+}
+
+// balance de situación en dos mitades: activo | pasivo + patrimonio neto
+function balanceSheetHtml(b) {
+  const L = S.libro; const v = vizMode();
+  const sumBy = (list) => { const o = {}; list.forEach((x) => { const c = L.byCode[x.code]; const g = L.isInv(x.code) ? 'Inversiones' : (displayGroup(c) || x.grupo); o[g] = (o[g] || 0) + x.saldo; }); return Object.entries(o).filter(([, s2]) => Math.abs(s2) > 0.5).sort((a, b2) => b2[1] - a[1]); };
+  const act = sumBy(b.activo); const pas = sumBy(b.pasivo); const pn = b.patrimonioNeto;
+  const COL = { 'Bancos y efectivo': v.s[0], Inversiones: v.s[2], Bienes: v.s[3] };
+  const colA = (g, i) => COL[g] || v.s[[4, 6, 7][i % 3]];
+  const tot = Math.max(b.totalActivo, b.totalPasivo + Math.max(pn, 0), 1);
+  const blocks = (items) => items.map(([g, val, col]) => `<div class="bs-blk" style="flex-grow:${Math.max(val, 0)};background:${col}" title="${esc(g)}: ${eur(val, 0)}"><span>${val / tot > 0.12 ? `${esc(g)}<b>${eur(val, 0)}</b>` : ''}</span></div>`).join('');
+  const rows = (items) => items.map(([g, val, col]) => `<li><span class="bs-sw" style="background:${col}"></span><span class="grow">${esc(g)}</span><strong>${eur(val, 0)}</strong></li>`).join('');
+  const A = act.map(([g, val], i) => [g, val, colA(g, i)]);
+  const P = [...pas.map(([g, val]) => [g, val, v.s[1]]), ...(pn > 0 ? [['Patrimonio neto', pn, v.s[6]]] : [])];
+  return `<div class="card bsheet"><div class="bs-cols">
+      <div><div class="bs-h">Lo que tienes <small>activo</small></div><div class="bs-stack" style="height:${Math.max(40, (b.totalActivo / tot) * 200)}px">${blocks(A)}</div><ul class="bs-list">${rows(A)}</ul><div class="bs-tot"><span>Total activo</span><strong>${eur(b.totalActivo, 0)}</strong></div></div>
+      <div><div class="bs-h">Cómo se financia <small>pasivo + patrimonio neto</small></div><div class="bs-stack" style="height:${Math.max(40, ((b.totalPasivo + Math.max(pn, 0)) / tot) * 200)}px">${blocks(P)}</div><ul class="bs-list">${rows(P)}${pn <= 0 ? `<li><span class="bs-sw"></span><span class="grow">Patrimonio neto</span><strong class="neg">${eur(pn, 0)}</strong></li>` : ''}</ul><div class="bs-tot"><span>Total pasivo + PN</span><strong>${eur(b.totalPasivo + pn, 0)}</strong></div></div>
+    </div><p class="small muted" style="margin:8px 0 0">Las dos mitades suman lo mismo: todo lo que tienes es tuyo (patrimonio neto) o lo debes (pasivo).</p></div>`;
 }
 
 function needsApertura() {
@@ -1066,9 +1110,9 @@ function infBalance() {
     return `<tr class="sec"><td colspan="${n + 1}">${title}</td></tr>${Object.entries(groups).map(([g, l]) => `${l.map((x) => row(x.nombre, valsOf(key, x.code), '', x.code)).join('')}${l.length > 1 && Object.keys(groups).length > 1 ? row(`Total ${g.toLowerCase()}`, bals.map((b) => b[key].filter((y) => l.some((z) => z.code === y.code)).reduce((s, y) => s + y.saldo, 0)), 'sub dim') : ''}`).join('')}`;
   };
   $('#inf').innerHTML = `${top}
+    ${balanceSheetHtml(target)}
     <div class="kpis" style="margin-bottom:12px"><div class="kpi"><div class="lbl">Patrimonio neto · fin de ${esc(MESES[Number(target.month.slice(5)) - 1].toLowerCase())}</div><div class="val">${eur(target.patrimonioNeto, 0)}</div><div class="sub">${withDiff ? `${target.patrimonioNeto - bals[0].patrimonioNeto >= 0 ? '+' : ''}${eur(target.patrimonioNeto - bals[0].patrimonioNeto, 0)} en el mes` : 'lo que tienes − lo que debes'}</div></div>
     <div class="kpi"><div class="lbl">Lo que tienes</div><div class="val">${eur(target.totalActivo, 0)}</div></div><div class="kpi"><div class="lbl">Lo que debes</div><div class="val">${eur(target.totalPasivo, 0)}</div></div></div>
-    ${isMes && !(L.inicio && ym(L.inicio) === S.mes) ? dondeAhorroHtml(S.mes) : ''}
     <div class="tablewrap"><table class="rep xhair">${head}
       ${section('activo', 'Lo que tienes (activo)')}
       ${row('Total activo', bals.map((b) => b.totalActivo), 'sub')}
@@ -1254,6 +1298,7 @@ async function viewGraficos() {
       <div class="card"><h3>En qué se va</h3>${porCat.length ? hbars(porCat, G, groupSum(prev.gastos, 'code'), 'data-cat') : '<div class="empty">Sin gastos en este periodo.</div>'}<p class="small muted" style="margin-bottom:0">Toca una categoría para filtrar todo por ella. ▲▼ = vs periodo anterior.</p></div>
       <div class="card"><h3>Tipo de gasto</h3><div class="chartbox"><canvas id="g2"></canvas></div></div>
       <div class="card"><h3>Ahorro acumulado</h3><div class="chartbox sm"><canvas id="g3"></canvas></div></div>
+      <div class="card"><div class="row between"><h3>Invertido</h3><strong>${eur(L.invertido(from, to), 0)}</strong></div><div class="chartbox sm"><canvas id="g6"></canvas></div><p class="small muted" style="margin-bottom:0">Dinero nuevo metido en tus cuentas de inversión (sin contar revalorizaciones)${I > 0 ? ` · ${fmt((L.invertido(from, to) / I) * 100, 0)} % de lo que entra` : ''}.</p></div>
       <div class="card"><h3>Desde dónde pagas</h3>${porBanco.length ? hbars(porBanco, G, groupSum(prev.gastos, 'banco'), 'data-banco') : '<div class="empty">—</div>'}</div>
       <div class="card"><h3>Qué día gastas más</h3><div class="chartbox sm"><canvas id="g4"></canvas></div><p class="small muted" style="margin-bottom:0">Media por día de la semana.</p></div>
       <div class="card"><h3>Gastos más grandes</h3><ul class="list">${top.map((x) => `<li class="tap" data-id="${esc(x.r.id)}"><span class="pk-ic">${emojiFor(L.byCode[x.code])}</span><div class="grow"><div class="t">${esc(x.r.concepto || L.nombre(x.code))}${x.imp ? ' <span class="chip imprevisto">imprevisto</span>' : ''}</div><div class="s">${esc(shortDate(x.r.fecha))} · ${esc(L.nombre(x.code))}</div></div><div class="amount">${eur(x.v)}</div></li>`).join('') || '<li class="muted">—</li>'}</ul></div>
@@ -1301,6 +1346,7 @@ async function viewGraficos() {
   S.charts.push(new Chart($('#g2'), { type: 'bar', data: { labels, datasets: blqData }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend, tooltip: money }, scales: { x: { ...xAxis, stacked: true }, y: { ...yAxis, stacked: true } } } }));
   let acc = 0; const accData = B.map((b, i) => (b.a > hoy ? null : (acc = round2(acc + iB[i] - gB[i]))));
   S.charts.push(new Chart($('#g3'), { type: 'line', data: { labels, datasets: [{ label: 'Ahorro acumulado', data: accData, borderColor: S1[2], backgroundColor: 'transparent', borderWidth: 2, tension: 0.25, pointRadius: B.length > 20 ? 0 : 4, pointHoverRadius: 5, pointBackgroundColor: S1[2], pointBorderColor: v.surface, pointBorderWidth: 2 }] }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend: { display: false }, tooltip: money }, scales: { x: xAxis, y: yAxis } } }));
+  S.charts.push(new Chart($('#g6'), { type: 'bar', data: { labels, datasets: [bar('Invertido', B.map((b) => (b.a > hoy ? null : L.invertido(b.a, b.b))), S1[2])] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: money }, scales: { x: xAxis, y: yAxis } } }));
   const DOW = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']; const cnt = Array(7).fill(0); const tot = Array(7).fill(0);
   for (let d = from; d <= to; d = addDays(d, 1)) cnt[(dOf(d).getDay() + 6) % 7]++;
   cur.gastos.filter((x) => x.bloque === 'variables' || x.bloque === 'imprevistos').forEach((x) => { tot[(dOf(x.r.fecha).getDay() + 6) % 7] += x.v; });
@@ -1355,7 +1401,9 @@ async function infReporte() {
   const maxC = Math.max(...cats.slice(0, 8).map((c) => Math.max(c.v, c.med)), 1);
   const grp = (list) => { const o = {}; list.forEach((x) => { const g = displayGroup(L.byCode[x.code]) || x.grupo; (o[g] ??= []).push(x); }); return o; };
   const balRows = (list) => Object.entries(grp(list.filter((x) => Math.abs(x.saldo) > 0.5))).map(([g, l]) => `<tr class="r-g"><td>${esc(g)}</td><td class="n">${eur(l.reduce((s, x) => s + x.saldo, 0), 0)}</td></tr>${l.map((x) => `<tr><td class="r-ind">${esc(x.nombre)}</td><td class="n">${eur(x.saldo, 0)}</td></tr>`).join('')}`).join('');
-  const donde = balOk ? L.dondeAhorro(m) : [];
+  const invM = L.invertido(`${m}-01`, `${m}-31`); const apl = L.aplicacion(`${m}-01`, `${m}-31`);
+  const donde = APL.filter(([k]) => Math.abs(apl[k]) > 0.5).map(([k, ic, nombre]) => ({ nombre: `${ic} ${nombre}`, aporta: apl[k] }));
+  if (invM > 0.5) notas.splice(1, 0, `Has metido <strong>${eur(invM, 0)}</strong> en tus inversiones${A > 0 ? `, el ${fmt((invM / A) * 100, 0)} % de lo ahorrado` : ''}.`);
   const titulo = mesLargo(m).replace(/^./, (c) => c.toUpperCase());
 
   $('#inf').innerHTML = `${periodBar(infReporte, { allowYear: false })}
@@ -1364,7 +1412,7 @@ async function infReporte() {
       <section class="r-page">
         <header class="r-head"><div><div class="r-kicker">Financito · reporte mensual</div><h1>${esc(titulo)}</h1></div><div class="r-date">Generado el ${esc(new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }))}</div></header>
         <div class="r-kpis">
-          <div class="r-kpi hero"><div class="lbl">Ahorro del mes</div><div class="val ${A < 0 ? 'neg' : ''}">${eur(A, 0)}</div><div class="sub">${I ? `${fmt(tasa * 100, 0)} % de los ingresos` : '—'}</div><div class="sub">${vs(A, p.resultado[1], true, 'vs mes anterior')}</div></div>
+          <div class="r-kpi hero"><div class="lbl">Ahorro del mes</div><div class="val ${A < 0 ? 'neg' : ''}">${eur(A, 0)}</div><div class="sub">${I ? `${fmt(tasa * 100, 0)} % de los ingresos` : '—'}</div><div class="sub">${vs(A, p.resultado[1], true, 'vs mes anterior')}</div><div class="sub">invertido ${eur(invM, 0)}${I ? ` (${fmt((invM / I) * 100, 0)} % de los ingresos)` : ''}</div></div>
           <div class="r-kpi"><div class="lbl">Ingresos</div><div class="val">${eur(I, 0)}</div><div class="sub">${vs(I, p.totalIngresos[1], true, 'vs mes ant.')}</div><div class="sub">${vs(I, avg(p.totalIngresos), true, 'vs media 12m')}</div></div>
           <div class="r-kpi"><div class="lbl">Gastos</div><div class="val">${eur(G, 0)}</div><div class="sub">${vs(G, p.totalGastos[1], false, 'vs mes ant.')}</div><div class="sub">${vs(G, avg(p.totalGastos), false, 'vs media 12m')}</div></div>
           <div class="r-kpi"><div class="lbl">Patrimonio neto</div><div class="val">${bal ? eur(bal.patrimonioNeto, 0) : '—'}</div><div class="sub">${bal && balP ? `${bal.patrimonioNeto - balP.patrimonioNeto >= 0 ? '+' : ''}${eur(bal.patrimonioNeto - balP.patrimonioNeto, 0)} en el mes` : bal ? 'fin de mes' : 'faltan saldos iniciales'}</div></div>
@@ -1399,7 +1447,7 @@ async function infReporte() {
               <tr class="r-tot"><td>Ahorro</td><td class="n">${eur(p.resultado[YTD], 0)}</td></tr>
               <tr><td>Tasa de ahorro</td><td class="n">${p.totalIngresos[YTD] ? `${fmt((p.resultado[YTD] / p.totalIngresos[YTD]) * 100, 0)} %` : '—'}</td></tr>
               <tr><td>Ahorro medio al mes</td><td class="n">${eur(p.resultado[YTD] / Number(m.slice(5)), 0)}</td></tr></table></div>
-            ${donde.length ? `<div class="r-box"><h2>Dónde ha ido el ahorro</h2><table class="r-t">${donde.slice(0, 7).map((x) => `<tr><td>${esc(x.nombre)}</td><td class="n ${cls(x.aporta)}">${x.aporta > 0 ? '+' : ''}${eur(x.aporta, 0)}</td></tr>`).join('')}</table></div>` : ''}
+            ${donde.length ? `<div class="r-box"><h2>Qué has hecho con el ahorro</h2><table class="r-t">${donde.slice(0, 7).map((x) => `<tr><td>${esc(x.nombre)}</td><td class="n ${cls(x.aporta)}">${x.aporta > 0 ? '+' : ''}${eur(x.aporta, 0)}</td></tr>`).join('')}</table></div>` : ''}
             <div class="r-box"><h2>Gastos más grandes</h2><table class="r-t">${grandes.map((r) => `<tr><td>${esc(shortDate(r.fecha))} · ${esc(r.concepto || L.nombre(r.debe))}${r.clase === 'imprevisto' ? ' <span class="chip imprevisto">imprevisto</span>' : ''}</td><td class="n">${eur(r.importe, 0)}</td></tr>`).join('') || '<tr><td class="muted">—</td></tr>'}</table></div>
           </div>
         </div>
@@ -1711,7 +1759,7 @@ function viewAjustes() {
   const pre = (L.db.Prestamos || []).filter((p) => p.nombre);
   const groups = {}; L.cuentas.forEach((c) => (groups[KIND_LABEL[kindOf(c)]] ??= []).push(c));
   const listOf = (kinds) => L.cuentas.filter((c) => kinds.includes(kindOf(c)) && !SYS.has(c.codigo)).sort((a, b) => kinds.indexOf(kindOf(a)) - kinds.indexOf(kindOf(b)));
-  const accLi = (c, saldo) => `<li class="tap" data-acc="${esc(c.codigo)}"><div class="grow"><div class="t">${esc(c.nombre)}${c.activa === 0 || c.activa === '0' ? ' <span class="chip">oculta</span>' : ''}</div><div class="s">${esc(displayGroup(c))}</div></div>${saldo && L.inicio ? `<div class="amount">${eur(L.balanceToDate(c.codigo))}</div>` : ''}</li>`;
+  const accLi = (c, saldo) => `<li class="tap" data-acc="${esc(c.codigo)}"><div class="grow"><div class="t">${esc(c.nombre)}${L.isInv(c.codigo) ? ' <span class="chip ok">inversión</span>' : ''}${c.activa === 0 || c.activa === '0' ? ' <span class="chip">oculta</span>' : ''}</div><div class="s">${esc(displayGroup(c))}</div></div>${saldo && L.inicio ? `<div class="amount">${eur(L.balanceToDate(c.codigo))}</div>` : ''}</li>`;
   view().innerHTML = `
     <h2 style="margin-top:4px">Mis cuentas</h2>
     <div class="card"><p class="small muted" style="margin-top:0">Donde tienes (o debes) el dinero: bancos, efectivo, inversiones, bienes y deudas.</p>
@@ -1744,7 +1792,7 @@ function viewAjustes() {
     <h2>Avanzado</h2>
     <details class="card"><summary>Plan contable completo (${L.cuentas.length} cuentas con su código)</summary>
       <p class="small muted">Así guarda Financito todo por debajo, con la numeración del Plan General Contable: 2 bienes, 5 bancos e inversiones, 6 gastos, 7 ingresos, 1 patrimonio y deudas.</p>
-      ${Object.entries(groups).map(([g, list]) => `<h3>${esc(g)}</h3><ul class="list">${list.map((c) => `<li class="tap" data-acc="${esc(c.codigo)}"><div class="grow"><div class="t">${esc(c.nombre)}${c.activa === 0 || c.activa === '0' ? ' <span class="chip">oculta</span>' : ''}</div><div class="s">${esc(c.codigo)} · ${esc(c.tipo)}</div></div></li>`).join('')}</ul>`).join('')}
+      ${Object.entries(groups).map(([g, list]) => `<h3>${esc(g)}</h3><ul class="list">${list.map((c) => `<li class="tap" data-acc="${esc(c.codigo)}"><div class="grow"><div class="t">${esc(c.nombre)}${L.isInv(c.codigo) ? ' <span class="chip ok">inversión</span>' : ''}${c.activa === 0 || c.activa === '0' ? ' <span class="chip">oculta</span>' : ''}</div><div class="s">${esc(c.codigo)} · ${esc(c.tipo)}</div></div></li>`).join('')}</ul>`).join('')}
     </details>
 
     <h2>Datos</h2>
@@ -1880,7 +1928,7 @@ function editCuenta(code, kind) {
   const L = S.libro; const c = L.cuentas.find((x) => x.codigo === code);
   const k = c ? kindOf(c) : kind;
   const fields = [{ key: 'nombre', label: 'Nombre', required: true }];
-  if (k === 'dinero') fields.push({ key: 'grupo', label: 'Tipo', type: 'select', options: [['Tesorería', 'Banco o efectivo'], ['Inversiones', 'Inversión (Trade Republic, fondos…)']] });
+  if (k === 'dinero') fields.push({ key: 'grupo', label: 'Tipo', type: 'select', options: [['Tesorería', 'Banco o efectivo'], ['Inversiones', 'Inversión (Trade Republic, MyInvestor, fondos…)']], hint: 'Lo que traspases a una cuenta de inversión cuenta como «invertido» en Inicio, PyG, Gráficos y el reporte.' });
   if (k === 'gasto') fields.push({ key: 'grupo', label: 'Grupo', type: 'select', options: [...new Set(['Gastos variables', 'Gastos fijos', ...L.cuentas.filter((x) => x.tipo === 'gasto').map((x) => x.grupo)])].map((g) => [g, g]) });
   fields.push({ key: 'activa', label: 'Visible en los formularios', type: 'checkbox' });
   const extra = c ? `<p class="hint">Código contable: ${esc(c.codigo)} · ${esc(c.tipo)}</p>` : '';

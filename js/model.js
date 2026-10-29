@@ -296,6 +296,48 @@ export class Libro {
   }
 
   // dónde ha acabado el ahorro de un mes: variación de cada cuenta de balance
+  // ---------- aplicación del ahorro ----------
+  isInv(code) { return this.byCode[String(code)]?.grupo === 'Inversiones'; }
+  // Destino del resultado entre dos fechas (ISO, inclusivas). Para cada apunte, la parte que toca
+  // cuentas de balance suma +importe si va al debe y −importe si va al haber. La suma de todo
+  // es exactamente ingresos − gastos (las dos partes de cada asiento se compensan).
+  aplicacion(from, to) {
+    const G = { inversion: 0, fondo: 0, bancos: 0, bienes: 0, deudas: 0, otros: 0 };
+    const det = {};
+    const grupo = (c) => {
+      const t = this.tipo(c);
+      if (t === 'gasto' || t === 'ingreso') return null;
+      if (this.isInv(c)) return 'inversion';
+      if (c === this.fondo) return 'fondo';
+      const k = this.kind(c);
+      if (k === 'dinero') return 'bancos';
+      if (k === 'deuda') return 'deudas';
+      if (k === 'bien' || String(c).startsWith('28')) return 'bienes';
+      return 'otros';
+    };
+    for (const r of this.activeRows) {
+      if (r.fecha < from || r.fecha > to || r.clase === 'apertura') continue; // la apertura no es ahorro
+      for (const [c, sg] of [[r.debe, 1], [r.haber, -1]]) {
+        const g = grupo(String(c)); if (!g) continue;
+        G[g] += sg * r.importe; det[c] = (det[c] || 0) + sg * r.importe;
+      }
+    }
+    Object.keys(G).forEach((k) => { G[k] = round2(G[k]); });
+    const detalle = Object.entries(det).map(([code, v]) => ({ code, nombre: this.nombre(code), grupo: grupo(code), v: round2(v) })).filter((x) => Math.abs(x.v) > 0.004);
+    return { ...G, total: round2(Object.values(G).reduce((a, b) => a + b, 0)), detalle };
+  }
+  // dinero nuevo metido en cuentas de inversión (traspasos netos desde otras cuentas; sin revalorizaciones)
+  invertido(from, to) {
+    let s = 0;
+    for (const r of this.activeRows) {
+      if (r.fecha < from || r.fecha > to) continue;
+      const di = this.isInv(r.debe); const hi = this.isInv(r.haber);
+      if (di && !hi && this.kind(r.haber) === 'dinero') s += r.importe;
+      if (hi && !di && this.kind(r.debe) === 'dinero') s -= r.importe;
+    }
+    return round2(s);
+  }
+
   dondeAhorro(m) {
     const prev = addMonths(m, -1); const out = [];
     for (const c of this.allCodes()) {
