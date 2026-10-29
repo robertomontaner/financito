@@ -102,7 +102,7 @@ Las líneas son aproximadas. Busca por el nombre de la función.
     - `apertura`: saldos iniciales, que fijan Config `inicio`;
     - plan contable avanzado (`editCuenta`);
     - importar y exportar JSON (`importar`, `exportar`). El JSON de importación admite `Cuentas`, `Diario`, `Activos`, `Inversiones`, `Recurrentes` (por id: actualiza o añade) y `Config` (objeto clave → valor).
-- **Campanita** (`abrirConfirmar`, `Libro.porConfirmar`): los movimientos generados por recurrentes y préstamos quedan pendientes (`Diario.confirmado` vacío) hasta que el usuario los confirma, edita o descarta. `Libro.duplicadosAuto` borra copias si dos dispositivos generan el mismo automático.
+- **Campanita** (`abrirConfirmar`, `Libro.porConfirmar`): los movimientos generados por recurrentes y préstamos quedan pendientes (`Diario.confirmado` vacío) hasta que el usuario los confirma, edita o descarta. `Libro.duplicadosAuto` borra copias si dos dispositivos generan el mismo automático. La campanita también pide cada mes el cierre de saldos del mes anterior (`cierrePendiente`: no hay fila en `Saldos` con fecha ≥ fin del mes anterior) hasta que se haga en Informes → Bancos.
 
 ## Modelo de datos (pestañas de la hoja = `TABLES` en model.js)
 

@@ -155,6 +155,7 @@ async function reload({ automations = false } = {}) {
     if (dup.length) { await S.store.update('Diario', dup.map((r) => ({ ...r, borrado: 1 }))); S.libro.set(await S.store.load()); }
     await migrar();
   }
+  refreshBell();
 }
 
 async function setConfig(clave, valor) {
@@ -335,15 +336,27 @@ function renderReconnect() {
 }
 
 // ---------------- campanita: confirmar lo automático ----------------
+// cierre de saldos mensual: se pide cada mes por el mes anterior (hasta que lo hagas, se queda en la campanita)
+function cierrePendiente() {
+  const L = S.libro; if (!L.inicio) return null;
+  const d = new Date(); d.setDate(0); const fin = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; // último día del mes anterior (hora local)
+  if (L.inicio > fin) return null;
+  const ultimo = (L.db.Saldos || []).map((x) => normDate(x.fecha)).sort().pop() || '';
+  return ultimo >= fin ? null : { fin, mes: MESES_LARGOS_[Number(fin.slice(5, 7)) - 1] };
+}
+const avisos = () => S.libro.porConfirmar().length + (cierrePendiente() ? 1 : 0);
+function refreshBell() { const b = $('#bell'); if (!b || !S.libro) return; const n = avisos(); b.querySelector('.badge')?.remove(); if (n) b.insertAdjacentHTML('beforeend', `<span class="badge">${n}</span>`); }
 function abrirConfirmar() {
-  const L = S.libro; const list = L.porConfirmar();
+  const L = S.libro; const list = L.porConfirmar(); const cierre = cierrePendiente();
   const li = (r) => `<li data-c="${esc(r.id)}"><span class="pk-ic">${emojiFor(L.byCode[L.tipo(r.debe) === 'gasto' ? r.debe : L.tipo(r.haber) === 'ingreso' ? r.haber : r.debe])}</span>
     <div class="grow"><div class="t">${esc(r.concepto)}</div><div class="s">${esc(shortDate(r.fecha))} · ${esc(L.nombre(L.tipo(r.haber) === 'ingreso' ? r.debe : r.haber))}</div></div>
     <div class="amount ${amountCls(r, L)}">${eur(r.importe)}</div>
     <div class="cf-btns"><button class="btn sm primary" data-ok="${esc(r.id)}" title="Sí, pasó así">✓</button><button class="btn sm" data-ed="${esc(r.id)}" title="Cambiar importe o fecha">✎</button><button class="btn sm" data-no="${esc(r.id)}" title="No pasó">✕</button></div></li>`;
-  openModal(`<h2>Por confirmar</h2>
+  const cierreHtml = cierre ? `<div class="banner" style="display:flex;gap:10px;align-items:center;justify-content:space-between"><span>🏦 <strong>Cierre de saldos de ${esc(cierre.mes)}</strong><br><span class="small">Pon lo que dice cada banco a fin de mes y se corrige lo que se te olvidó apuntar.</span></span><button class="btn sm primary" id="gocierre2">Hacer</button></div>` : '';
+  openModal(`<h2>Por confirmar</h2>${cierreHtml}
     <p class="small muted" style="margin-top:-4px">Lo que Financito apuntó solo (nóminas, recibos, cuotas). Confírmalo cuando lo veas en el banco: ✓ si fue así, ✎ si cambió el importe o el día, ✕ si no pasó. Mientras tanto se queda aquí.</p>
-    ${list.length ? `<ul class="list cf-list">${list.map(li).join('')}</ul><div class="actions"><button class="btn" data-cancel>Cerrar</button><button class="btn primary" id="cfall">Confirmar todo (${list.length})</button></div>` : '<div class="empty">Todo confirmado 🎉</div><div class="actions"><button class="btn" data-cancel>Cerrar</button></div>'}`, (m) => {
+    ${list.length ? `<ul class="list cf-list">${list.map(li).join('')}</ul>` : `<div class="empty">${cierre ? 'Nada automático por confirmar.' : 'Todo confirmado 🎉'}</div>`}
+    <div class="actions"><button class="btn" data-cancel>Cerrar</button>${list.length ? `<button class="btn primary" id="cfall">Confirmar todo (${list.length})</button>` : ''}</div>`, (m) => {
     $('[data-cancel]', m).onclick = closeModal;
     const rowOf = (id) => L.rows.find((x) => String(x.id) === String(id));
     const save = async (rows) => { try { await S.store.update('Diario', rows); await reload(); closeModal(); render(); if (S.libro.porConfirmar().length) abrirConfirmar(); } catch (e) { fail(e); } };
@@ -354,6 +367,7 @@ function abrirConfirmar() {
         values: { importe: r.importe, fecha: r.fecha }, saveLabel: 'Guardar y confirmar',
         onSave: async (d) => { await S.store.update('Diario', [{ ...r, ...d, importe: round2(num(d.importe)), confirmado: 1 }]); await reload(); } }); }; });
     $('#cfall', m)?.addEventListener('click', () => save(list.map((r) => ({ ...rowOf(r.id), confirmado: 1 }))));
+    $('#gocierre2', m)?.addEventListener('click', () => { closeModal(); S.informe = 'cuadre'; S.cuadreFecha = cierre.fin; location.hash = '#/informes'; render(); });
   });
 }
 
@@ -364,7 +378,7 @@ function render() {
   const r = (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'inicio';
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.r === r));
   $('#title').textContent = { inicio: 'Financito', mes: 'Mes', apuntar: 'Apuntar', diario: 'Movimientos', informes: 'Informes', ajustes: 'Ajustes', graficos: 'Gráficos', inversiones: 'Inversiones' }[r] || 'Financito';
-  $('#topbar-actions').innerHTML = `${S.store.kind === 'demo' ? '<span class="chip">demo</span>' : ''}<a href="#/inversiones" class="iconbtn ${r === 'inversiones' ? 'on' : ''}" aria-label="Inversiones" title="Inversiones"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></a><a href="#/graficos" class="iconbtn ${r === 'graficos' ? 'on' : ''}" aria-label="Gráficos" title="Gráficos"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></a><button class="iconbtn bell" id="bell" aria-label="Por confirmar" title="Automáticos por confirmar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>${(() => { const n = S.libro.porConfirmar().length; return n ? `<span class="badge">${n}</span>` : ''; })()}</button><a href="#/ajustes" class="iconbtn ${r === 'ajustes' ? 'on' : ''}" aria-label="Ajustes">⚙</a>`;
+  $('#topbar-actions').innerHTML = `${S.store.kind === 'demo' ? '<span class="chip">demo</span>' : ''}<a href="#/inversiones" class="iconbtn ${r === 'inversiones' ? 'on' : ''}" aria-label="Inversiones" title="Inversiones"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></a><a href="#/graficos" class="iconbtn ${r === 'graficos' ? 'on' : ''}" aria-label="Gráficos" title="Gráficos"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></a><button class="iconbtn bell" id="bell" aria-label="Por confirmar" title="Automáticos por confirmar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>${(() => { const n = avisos(); return n ? `<span class="badge">${n}</span>` : ''; })()}</button><a href="#/ajustes" class="iconbtn ${r === 'ajustes' ? 'on' : ''}" aria-label="Ajustes">⚙</a>`;
   $('#bell').onclick = abrirConfirmar;
   view().classList.toggle('wide', ['graficos', 'informes', 'inversiones'].includes(r));
   (ROUTES[r] || viewInicio)();
@@ -1733,7 +1747,7 @@ function infCuadre() {
   S.cuadreFecha ??= todayISO(); const fecha = S.cuadreFecha;
   const accs = L.cuentas.filter((c) => kindOf(c) === 'dinero' && (c.activa !== 0 || L.balanceToDate(c.codigo)));
   const lastReal = (code) => (L.db.Saldos || []).filter((s2) => String(s2.cuenta) === code).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0];
-  const finMes = (() => { const d = new Date(); d.setDate(0); return d.toISOString().slice(0, 10); })();
+  const finMes = (() => { const d = new Date(); d.setDate(0); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; })();
   $('#inf').innerHTML = `<div class="card" style="margin-bottom:12px"><strong>Cierre de saldos</strong>
       <ol class="small" style="margin:6px 0 10px;padding-left:18px"><li>Elige la fecha (hoy o el último día del mes).</li><li>Escribe lo que dice cada banco ese día. Deja en blanco las que no quieras revisar.</li><li>Pulsa «Corregir diferencias»: se apunta un movimiento de corrección en cada cuenta que no cuadre.</li></ol>
       <div class="row wrap"><input type="date" id="cfecha" value="${esc(fecha)}" style="width:auto;flex:1">${fecha !== finMes ? `<button class="btn sm" id="fmes">Fin de ${esc(MESES[Number(finMes.slice(5, 7)) - 1].toLowerCase())}</button>` : ''}${fecha !== todayISO() ? '<button class="btn sm" id="fhoy">Hoy</button>' : ''}</div></div>

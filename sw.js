@@ -1,5 +1,5 @@
 // Service worker: red primero y caché como respaldo (la app siempre usa la última versión publicada).
-const CACHE = 'financito-v29';
+const CACHE = 'financito-v30';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/model.js', 'js/store.js', 'js/config.js', 'manifest.webmanifest', 'icons/icon.svg'];
 
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())); });
