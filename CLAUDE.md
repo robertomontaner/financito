@@ -68,7 +68,7 @@ Las líneas son aproximadas. Busca por el nombre de la función.
   - `infBalance`: arriba el balance de situación en dos mitades (`balanceSheetHtml`): activo | pasivo + patrimonio neto, con bloques por grupo y el desglose de cada cuenta (el PN se desglosa en patrimonio inicial y ahorro acumulado). Tocar una cuenta abre su mayor. Debajo, la tabla mes a mes.
   - PyG y Balance llevan € y la cruz de lectura `crosshair` al pasar el ratón.
   - **Invertido:** las cuentas con grupo «Inversiones» (`Libro.isInv`; se marcan en Ajustes → cuenta → Tipo «Inversión») cuentan como inversión. `Libro.invertido(from, to)` suma el dinero nuevo traspasado a ellas, sin revalorizaciones. Sale en Inicio, PyG, Gráficos y el reporte. Lo que se mete a invertir es un traspaso, nunca un gasto.
-  - `infCuadre`: «Cierre de saldos». El usuario mete el saldo real de cada banco y se crea un asiento de corrección contra 659/759, o 663/763 en inversiones.
+  - `infCuadre`: «Cierre de saldos». Siempre contra todo lo apuntado hasta hoy, sin elegir fecha (decisión del usuario: es un «refresco» de descuadres, no un cierre de fin de mes). El usuario mete el saldo real de cada banco, ve antes de guardar a qué cuenta irá cada diferencia (659/759, o 663/763 en inversiones) y se crea el asiento de corrección. Debajo, «Cierres hechos» (`cierresHechos`, `cierreHtml`): por fecha, Financito vs banco, diferencia y a dónde fue (enlace al movimiento).
   - `infReporte`: reporte ejecutivo de 2 páginas A4, impreso con `window.print()` y estilos `@media print`.
 - **Gráficos** (`viewGraficos`):
   - Filtros:

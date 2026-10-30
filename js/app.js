@@ -1788,47 +1788,74 @@ function editSobre(id, kind) {
 }
 
 // ---------- comprobar con el banco ----------
+// Cierre de saldos: siempre contra todo lo apuntado hasta hoy (un «refresco» de descuadres, sin elegir fecha).
+// Debajo se ve cada cierre guardado: qué decía Financito, qué decía el banco y a qué cuenta fue la diferencia.
+const destinoAjuste = (inv, d) => (inv ? (d > 0 ? '763' : '663') : (d > 0 ? '759' : '659'));
+function cierresHechos() {
+  const L = S.libro; const porFecha = new Map();
+  for (const x of L.db.Saldos || []) {
+    if (truthy(x.borrado)) continue; const f = normDate(x.fecha); if (!porFecha.has(f)) porFecha.set(f, new Map());
+    porFecha.get(f).set(String(x.cuenta), { code: String(x.cuenta), real: num(x.saldo), d: 0, mov: null });
+  }
+  for (const r of L.activeRows) {
+    if (r.clase !== 'ajuste') continue; const f = r.fecha; if (!porFecha.has(f)) porFecha.set(f, new Map());
+    const code = L.tipo(r.debe) === 'gasto' || L.tipo(r.debe) === 'ingreso' ? r.haber : r.debe; const sign = code === r.debe ? 1 : -1;
+    const m = porFecha.get(f); const it = m.get(code) || { code, real: null, d: 0, mov: null };
+    it.d = round2(it.d + sign * r.importe); it.mov = r; it.dest = sign > 0 ? r.haber : r.debe; m.set(code, it);
+  }
+  return [...porFecha].sort((x, y) => y[0].localeCompare(x[0])).map(([fecha, m]) => ({ fecha, items: [...m.values()] }));
+}
+function cierreHtml(c, open) {
+  const L = S.libro; const descuadre = round2(c.items.filter((i) => !L.isInv(i.code)).reduce((s2, i) => s2 + i.d, 0)); const reval = round2(c.items.filter((i) => L.isInv(i.code)).reduce((s2, i) => s2 + i.d, 0));
+  const res = [Math.abs(descuadre) >= 0.01 ? `<span class="${descuadre < 0 ? 'neg' : 'pos'}">descuadre ${descuadre > 0 ? '+' : ''}${eur(descuadre)}</span>` : '<span class="pos">todo cuadraba</span>', Math.abs(reval) >= 0.01 ? `<span class="${reval < 0 ? 'neg' : 'pos'}">inversiones ${reval > 0 ? '+' : ''}${eur(reval)}</span>` : ''].filter(Boolean).join(' · ');
+  return `<details class="cierre"${open ? ' open' : ''}><summary><span class="ci-f">${esc(shortDate(c.fecha))}</span><span class="small">${res}</span><span class="small muted">${c.items.length} cuenta${c.items.length === 1 ? '' : 's'}</span></summary>
+    <table class="ci-t"><thead><tr><th>Cuenta</th><th class="n">Financito</th><th class="n">Banco</th><th class="n">Diferencia</th><th>Fue a</th></tr></thead><tbody>
+    ${c.items.map((i) => { const lib = i.real === null ? null : round2(i.real - i.d); return `<tr><td><span class="pk-ic sm">${emojiFor(L.byCode[i.code])}</span> ${esc(L.nombre(i.code))}</td><td class="n">${lib === null ? '–' : eur(lib)}</td><td class="n">${i.real === null ? '–' : eur(i.real)}</td>
+      <td class="n ${Math.abs(i.d) < 0.01 ? 'pos' : i.d < 0 ? 'neg' : 'pos'}">${Math.abs(i.d) < 0.01 ? '✓' : `${i.d > 0 ? '+' : ''}${eur(i.d)}`}</td>
+      <td>${i.mov ? `<a href="#" data-mov="${esc(i.mov.id)}">${esc(L.nombre(i.dest))} <span class="ss-code">${esc(i.dest)}</span></a>` : '<span class="muted">—</span>'}</td></tr>`; }).join('')}</tbody></table></details>`;
+}
 function infCuadre() {
   const L = S.libro;
   if (!L.inicio) { $('#inf').innerHTML = `${needsApertura()}<p class="muted">Cuando metas los saldos iniciales podrás comprobar aquí, cuenta por cuenta, que lo que dice Financito coincide con lo que tienes de verdad en el banco.</p>`; $('#goap')?.addEventListener('click', () => setTimeout(apertura, 50)); return; }
-  S.cuadreFecha ??= todayISO(); const fecha = S.cuadreFecha;
+  const fecha = todayISO();
   const accs = L.cuentas.filter((c) => kindOf(c) === 'dinero' && (c.activa !== 0 || L.balanceToDate(c.codigo)));
   const lastReal = (code) => (L.db.Saldos || []).filter((s2) => String(s2.cuenta) === code).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0];
-  const finMes = (() => { const d = new Date(); d.setDate(0); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; })();
+  const cierres = cierresHechos();
   $('#inf').innerHTML = `<div class="card" style="margin-bottom:12px"><strong>Cierre de saldos</strong>
-      <ol class="small" style="margin:6px 0 10px;padding-left:18px"><li>Elige la fecha (hoy o el último día del mes).</li><li>Escribe lo que dice cada banco ese día. Deja en blanco las que no quieras revisar.</li><li>Pulsa «Corregir diferencias»: se apunta un movimiento de corrección en cada cuenta que no cuadre.</li></ol>
-      <div class="row wrap"><input type="date" id="cfecha" value="${esc(fecha)}" style="width:auto;flex:1">${fecha !== finMes ? `<button class="btn sm" id="fmes">Fin de ${esc(MESES[Number(finMes.slice(5, 7)) - 1].toLowerCase())}</button>` : ''}${fecha !== todayISO() ? '<button class="btn sm" id="fhoy">Hoy</button>' : ''}</div></div>
-    <div class="card"><ul class="list">${accs.map((c) => { const lib = L.balanceToDate(c.codigo, fecha); const lr = lastReal(c.codigo); return `<li style="flex-wrap:wrap"><span class="pk-ic">${emojiFor(c)}</span><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="s">Según Financito: <strong>${eur(lib)}</strong>${lr ? ` · comprobado el ${esc(normDate(lr.fecha))}` : ''}</div></div>
+      <p class="small" style="margin:6px 0 0">Escribe lo que dice ahora cada banco (deja en blanco los que no quieras revisar). Se compara con todo lo que hay apuntado hasta hoy y, al guardar, cada diferencia se apunta como corrección. Hazlo cuando quieras: es un refresco de descuadres.</p></div>
+    <div class="card"><ul class="list">${accs.map((c) => { const lib = L.balanceToDate(c.codigo, fecha); const lr = lastReal(c.codigo); return `<li style="flex-wrap:wrap"><span class="pk-ic">${emojiFor(c)}</span><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="s">Según Financito: <strong>${eur(lib)}</strong>${lr ? ` · último cierre el ${esc(shortDate(normDate(lr.fecha)))}` : ''}</div></div>
       <input type="text" inputmode="decimal" data-real="${esc(c.codigo)}" placeholder="En tu banco" aria-label="Saldo en tu banco de ${esc(c.nombre)}" style="width:120px;min-height:38px;padding:7px 10px;text-align:right">
       <div data-diff="${esc(c.codigo)}" class="small" style="width:100%"></div></li>`; }).join('')}</ul></div>
-    <button class="btn primary block" id="fixall" style="margin-top:12px" disabled>Corregir diferencias</button>
-    <p class="small muted">Las correcciones van a «Descuadres» (gasto o ingreso pequeño) y aparecen en la PyG, así ves cuánto se te escapa al mes. En inversiones se apuntan como revalorización (ganancia o pérdida de valor). Si encuentras el movimiento que faltaba, apúntalo y borra la corrección.</p>`;
-  $('#cfecha').onchange = (e) => { S.cuadreFecha = e.target.value || todayISO(); infCuadre(); };
-  $('#fmes')?.addEventListener('click', () => { S.cuadreFecha = finMes; infCuadre(); });
-  $('#fhoy')?.addEventListener('click', () => { S.cuadreFecha = todayISO(); infCuadre(); });
+    <button class="btn primary block" id="fixall" style="margin-top:12px" disabled>Guardar cierre</button>
+    <p class="small muted">Los descuadres de bancos van a «Descuadres» (659, si falta dinero) o «Descuadres a favor» (759, si sobra) y salen en la PyG. En inversiones la diferencia es revalorización (663 pérdida, 763 ganancia). Si luego encuentras el movimiento que faltaba, apúntalo y borra la corrección.</p>
+    <h3 style="margin-top:18px">Cierres hechos</h3>
+    ${cierres.length ? `<div class="card cierres">${cierres.slice(0, 12).map((c, i) => cierreHtml(c, i === 0)).join('')}</div>` : '<p class="small muted">Todavía no has hecho ninguno.</p>'}`;
   const state = {};
-  const refreshBtn = () => { const n = Object.values(state).filter((x) => Math.abs(x.d) >= 0.01).length; const ok = Object.values(state).length; const b = $('#fixall'); b.disabled = !ok; b.textContent = n ? `Corregir ${n} diferencia${n > 1 ? 's' : ''}` : ok ? 'Guardar saldos comprobados' : 'Corregir diferencias'; };
+  const refreshBtn = () => { const n = Object.values(state).filter((x) => Math.abs(x.d) >= 0.01).length; const ok = Object.values(state).length; const b = $('#fixall'); b.disabled = !ok; b.textContent = n ? `Guardar cierre y corregir ${n} diferencia${n > 1 ? 's' : ''}` : 'Guardar cierre'; };
   $$('[data-real]').forEach((inp) => {
     inp.oninput = () => {
-      const code = inp.dataset.real; const box = $(`[data-diff="${code}"]`); const inv = L.byCode[code]?.grupo === 'Inversiones';
+      const code = inp.dataset.real; const box = $(`[data-diff="${code}"]`); const inv = L.isInv(code);
       if (!inp.value.trim()) { box.innerHTML = ''; delete state[code]; refreshBtn(); return; }
       const real = num(inp.value); const d = round2(real - L.balanceToDate(code, fecha)); state[code] = { real, d, inv };
+      const dest = destinoAjuste(inv, d);
       box.innerHTML = Math.abs(d) < 0.01 ? '<span class="pos">✓ Cuadra</span>'
-        : `<span class="${inv ? '' : 'neg'}">${inv ? (d > 0 ? `Tu inversión ha subido ${eur(d)}` : `Tu inversión ha bajado ${eur(-d)}`) : (d < 0 ? `Faltan ${eur(-d)}: algún gasto sin apuntar` : `Sobran ${eur(d)}: algún ingreso sin apuntar`)}</span> · <a href="#" data-ver="${esc(code)}">ver movimientos</a>`;
+        : `<span class="${inv ? '' : 'neg'}">${inv ? (d > 0 ? `Ha subido ${eur(d)}` : `Ha bajado ${eur(-d)}`) : (d < 0 ? `Faltan ${eur(-d)}: algún gasto sin apuntar` : `Sobran ${eur(d)}: algún ingreso sin apuntar`)}</span> <span class="muted">→ irá a ${esc(L.nombre(dest))} (${dest})</span> · <a href="#" data-ver="${esc(code)}">ver movimientos</a>`;
       $(`[data-ver="${code}"]`, box)?.addEventListener('click', (e) => { e.preventDefault(); S.diario = { ...S.diario, cuenta: code, mes: '', q: '' }; location.hash = '#/diario'; });
       refreshBtn();
     };
   });
+  $$('[data-mov]', $('#inf')).forEach((a2) => { a2.onclick = (e) => { e.preventDefault(); editEntry(a2.dataset.mov); }; });
   $('#fixall').onclick = async () => {
     const entries = Object.entries(state); const fixes = entries.filter(([, x]) => Math.abs(x.d) >= 0.01);
-    if (fixes.length && !confirm(`Se apuntarán ${fixes.length} correcciones con fecha ${fecha}:\n${fixes.map(([c, x]) => `· ${L.nombre(c)}: ${x.d > 0 ? '+' : ''}${eur(x.d)}`).join('\n')}\n\n¿Seguir?`)) return;
+    if (fixes.length && !confirm(`Se apuntarán ${fixes.length} correcciones con fecha de hoy:\n${fixes.map(([c, x]) => `· ${L.nombre(c)}: ${x.d > 0 ? '+' : ''}${eur(x.d)} → ${L.nombre(destinoAjuste(x.inv, x.d))}`).join('\n')}\n\n¿Seguir?`)) return;
     const btn = $('#fixall'); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
     try {
       const asiento = uid();
-      const rows = fixes.map(([code, x]) => { const [debe, haber] = x.inv ? (x.d > 0 ? [code, '763'] : ['663', code]) : (x.d > 0 ? [code, '759'] : ['659', code]); return newEntry({ asiento, fecha, concepto: x.inv ? `Revalorización ${L.nombre(code)}` : `Corrección de saldo ${L.nombre(code)}`, debe, haber, importe: Math.abs(x.d), clase: 'ajuste', origen: 'cuadre' }); });
+      const rows = fixes.map(([code, x]) => { const dest = destinoAjuste(x.inv, x.d); const [debe, haber] = x.d > 0 ? [code, dest] : [dest, code]; return newEntry({ asiento, fecha, concepto: x.inv ? `Revalorización ${L.nombre(code)}` : `Corrección de saldo ${L.nombre(code)}`, debe, haber, importe: Math.abs(x.d), clase: 'ajuste', origen: 'cuadre' }); });
       if (rows.length) await S.store.add('Diario', rows);
       await S.store.add('Saldos', entries.map(([code, x]) => ({ id: uid(), fecha, cuenta: code, saldo: x.real, notas: Math.abs(x.d) >= 0.01 ? 'corregido' : 'cuadra' })));
-      await reload(); toast(rows.length ? `${rows.length} corrección${rows.length > 1 ? 'es' : ''} apuntada${rows.length > 1 ? 's' : ''}` : 'Saldos comprobados'); infCuadre();
+      await reload(); toast(rows.length ? `Cierre guardado · ${rows.length} corrección${rows.length > 1 ? 'es' : ''}` : 'Cierre guardado: todo cuadra'); infCuadre();
+      $('.cierres')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (e) { fail(e); infCuadre(); }
   };
 }
