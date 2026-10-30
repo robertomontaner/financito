@@ -371,6 +371,31 @@ function abrirConfirmar() {
   });
 }
 
+// ---------------- escritorio: dos columnas ----------------
+// En pantallas anchas, Inicio, Mes y Ajustes reparten sus tarjetas en dos columnas (en el móvil no se toca nada).
+// Arriba se queda a todo el ancho lo que es de cabecera; cada título h2 viaja junto a su tarjeta.
+const DESK = matchMedia('(min-width: 1000px)');
+const COL_HEAD = '.periodbar, .banner, .mes-estado, .kpis, h1, .seg';
+function colsLayout() {
+  const v = view();
+  if (!DESK.matches || !v.classList.contains('cols')) { v.classList.remove('split'); return; }
+  if (v.querySelector(':scope > .cols2')) return;
+  const kids = [...v.children]; let i = 0; let j = kids.length;
+  while (i < j && kids[i].matches(COL_HEAD)) i++;
+  while (j > i && kids[j - 1].matches('p.small')) j--;
+  const body = kids.slice(i, j);
+  if (body.length < 2) { v.classList.remove('split'); return; }
+  const wrap = document.createElement('div'); wrap.className = 'cols2';
+  for (let k = 0; k < body.length; k++) {
+    const el = body[k];
+    if (/^H[23]$/.test(el.tagName) && body[k + 1]) { const sec = document.createElement('section'); sec.className = 'sec'; sec.append(el, body[k + 1]); wrap.append(sec); k++; } else wrap.append(el);
+  }
+  v.insertBefore(wrap, kids[j] || null);
+  v.classList.add('split');
+}
+new MutationObserver(colsLayout).observe(document.getElementById('view'), { childList: true });
+DESK.addEventListener('change', () => render());
+
 // ---------------- router ----------------
 const ROUTES = { inicio: viewInicio, mes: viewMes, apuntar: viewApuntar, diario: viewDiario, informes: viewInformes, ajustes: viewAjustes, graficos: viewGraficos, inversiones: viewInversiones };
 function render() {
@@ -381,6 +406,7 @@ function render() {
   $('#topbar-actions').innerHTML = `${S.store.kind === 'demo' ? '<span class="chip">demo</span>' : ''}<a href="#/inversiones" class="iconbtn ${r === 'inversiones' ? 'on' : ''}" aria-label="Inversiones" title="Inversiones"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></a><a href="#/graficos" class="iconbtn ${r === 'graficos' ? 'on' : ''}" aria-label="Gráficos" title="Gráficos"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></a><button class="iconbtn bell" id="bell" aria-label="Por confirmar" title="Automáticos por confirmar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>${(() => { const n = avisos(); return n ? `<span class="badge">${n}</span>` : ''; })()}</button><a href="#/ajustes" class="iconbtn ${r === 'ajustes' ? 'on' : ''}" aria-label="Ajustes">⚙</a>`;
   $('#bell').onclick = abrirConfirmar;
   view().classList.toggle('wide', ['graficos', 'informes', 'inversiones'].includes(r));
+  view().classList.toggle('cols', ['inicio', 'mes', 'ajustes'].includes(r));
   (ROUTES[r] || viewInicio)();
   view().focus({ preventScroll: true });
 }

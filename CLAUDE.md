@@ -49,6 +49,7 @@ Las líneas son aproximadas. Busca por el nombre de la función.
 - **Router:** `ROUTES` y `render()`. Las rutas son `inicio`, `mes`, `apuntar`, `diario`, `informes`, `ajustes`, `graficos` e `inversiones`.
   - Las tres últimas cuelgan de iconos de la topbar.
   - `#view.wide` (1180 px) se usa en informes, gráficos e inversiones.
+  - En escritorio (≥ 1000 px), Inicio, Mes y Ajustes van a dos columnas: `colsLayout` (un MutationObserver sobre `#view`) mete las tarjetas en `.cols2` (CSS `columns: 2`) y deja arriba, a todo el ancho, la cabecera (`.periodbar`, banners, `.mes-estado`, `.kpis`, `h1`); cada `h2` viaja con su tarjeta. En el móvil no se toca nada.
 - **Inicio:** `viewInicio`.
 - **Apuntar:** `viewApuntar` con plantillas de gasto (con casilla «Imprevisto»), ingreso, traspaso, compra de activo y libre. `editEntry` sirve para editar.
 - **Mes (plan de caja):** `viewMes`, `fijoMes` (importe especial solo para un mes), `copiarPlan`, `juntarRepetidas`, `editLinea`, `cfgMes`, `hacerReparto` y `deshacerReparto`. Arriba sale el estado de los traspasos del mes (`planMes().estado`: `hecho`, `pendiente`, `sin` o `previo`); los meses que empiezan antes de `inicio` se dan por hechos, porque se repartieron fuera de la app.
