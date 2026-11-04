@@ -203,7 +203,13 @@ Hacer push a `main` en `robertomontaner/financito`; GitHub Pages despliega en un
 
 ## Pendiente o ideas
 
-1. **Histórico 2021-2026 y saldos iniciales (29/10/2026)**: preparados en un JSON fuera del repo (datos personales) a partir de su Excel IG_26; el usuario lo importa desde Ajustes. Todo lo anterior al 29/10/2026 va contra 119 (solo PyG). Faltan los gastos de bolsillos de enero a marzo de 2026 (no existen). Pendiente: alta de sus fondos de inversión en la sección Inversiones y mover Mediolanum → Ibercaja con el asistente cuando termine la migración.
-2. Opcional: un login con Apps Script y contraseña propia.
-3. Opcional: provisión de imprevistos.
-4. Opcional: una tarea programada que genere o envíe el reporte del mes anterior cada día 1.
+La lista viva para el usuario está en su página de Notion «Financito» (sección «Pendientes» y «Changelog»).
+
+1. **Gráficos / estadísticas:** el usuario quiere darle una vuelta completa más adelante.
+2. **Inversiones:** dar de alta sus fondos en la sección Inversiones, y el bitcoin (~700 € invertidos, falta la fecha).
+3. **Mediolanum ya está cerrada:** se hizo «Cambiar de banco» a Ibercaja (5727, ahora cuenta principal). En `Config` había `cuenta_principal` repetida; desde ahora manda la primera fila y `setConfig` actualiza todas.
+4. Panel de «salud financiera» en Inicio (tasa de ahorro, meses de colchón, gasto corriente frente al año anterior, patrimonio), ofrecido y sin decidir.
+5. Escritorio: Movimientos con filtros en barra lateral, ofrecido.
+6. Opcional: login con Apps Script y contraseña propia.
+7. Opcional: provisión de imprevistos.
+8. Opcional: una tarea programada que genere o envíe el reporte del mes anterior cada día 1.
