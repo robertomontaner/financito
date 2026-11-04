@@ -133,7 +133,8 @@ export class Libro {
       ...r, debe: String(r.debe), haber: String(r.haber), importe: num(r.importe), fecha: normDate(r.fecha),
     }));
     this.activeRows = this.rows.filter((r) => !truthy(r.borrado) && r.fecha);
-    this.config = Object.fromEntries((db.Config || []).map((c) => [c.clave, c.valor]));
+    // si una clave está repetida en la hoja, manda la primera (la que actualiza setConfig)
+    this.config = {}; for (const c of db.Config || []) if (c.clave && !(c.clave in this.config)) this.config[c.clave] = c.valor;
     // Fecha desde la que se llevan saldos (asiento de apertura). Lo anterior solo cuenta para estadísticas (PyG, gráficos).
     this.inicio = normDate(this.config.inicio || '');
     this.balRows = this.inicio ? this.activeRows.filter((r) => r.fecha >= this.inicio) : this.activeRows;

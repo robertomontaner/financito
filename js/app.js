@@ -160,8 +160,9 @@ async function reload({ automations = false } = {}) {
 }
 
 async function setConfig(clave, valor) {
-  const row = (S.libro.db.Config || []).find((c) => c.clave === clave);
-  if (row) await S.store.update('Config', [{ ...row, valor }]); else await S.store.add('Config', [{ clave, valor }]);
+  // actualiza todas las filas con esa clave (si alguna vez se duplicó, así no quedan valores viejos)
+  const rows = (S.libro.db.Config || []).filter((c) => c.clave === clave);
+  if (rows.length) await S.store.update('Config', rows.map((r) => ({ ...r, valor }))); else await S.store.add('Config', [{ clave, valor }]);
 }
 
 // Arreglos de datos entre versiones (se ejecutan una sola vez)
