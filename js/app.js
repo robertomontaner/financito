@@ -1437,6 +1437,11 @@ async function viewGraficos() {
     const porIng = Object.entries(groupSum(cur.ingresos, 'code')).filter(([, x]) => x > 0.004).sort((a, b) => b[1] - a[1]);
     const porBanco = Object.entries(groupSum(gastos, 'banco')).filter(([c, x]) => c && x > 0.004).sort((a, b) => b[1] - a[1]);
     const blqName = Object.fromEntries(BLQ_DEF.map(([k, l]) => [k, l]));
+    // «Entra y sale» siempre por meses: los del periodo y, si son menos de 6, los anteriores para tener contexto
+    const mHasta = ym(to < hoy ? to : hoy); const mDesde = ym(from);
+    const mesesRango = monthsBetween(mDesde, mHasta).length;
+    const mesesES = monthsBetween(mesesRango < 6 ? addMonths(mHasta, -5) : mDesde, mHasta);
+    const esData = mesesES.map((m) => { const mm = gMovs(`${m}-01`, endOfMonth(m)); return { m, I: sumV(mm.ingresos), b: Object.fromEntries(BLQ_DEF.map(([k]) => [k, round2(mm.gastos.filter((x) => x.bloque === k).reduce((s2, x) => s2 + x.v, 0))])) }; });
 
     view().innerHTML = `${toolbar}
       <div class="kpis g4">
@@ -1448,8 +1453,8 @@ async function viewGraficos() {
       <div class="ggrid">
         <div class="card span2"><div class="row between"><h3>Cómo se reparte lo que entra</h3><span class="small muted">toca un tramo para ver su detalle</span></div>
           <div class="wf">${wf}</div>${aplHtml}</div>
-        <div class="card span2"><div class="row between"><h3>Entra y sale</h3><span class="small muted">por ${unit}</span></div><div class="chartbox"><canvas id="g1"></canvas></div>
-          <p class="small muted" style="margin-bottom:0">Los gastos van apilados con los mismos colores de arriba.</p></div>
+        <div class="card span2"><div class="row between"><h3>Entra y sale</h3><span class="small muted">por mes</span></div><div class="chartbox"><canvas id="g1"></canvas></div>
+          <p class="small muted" style="margin-bottom:0">Los gastos van apilados con los mismos colores de arriba.${mesesES.length > mesesRango ? ' Los meses en claro quedan fuera del periodo elegido; salen para que tengas contexto.' : ''}</p></div>
         <div class="card" id="gwhere"><div class="row between"><h3>En qué se va${g.blq ? ` · ${esc(blqName[g.blq])}` : ''}</h3>${g.blq ? '<button class="gchip sm on" data-blq="' + esc(g.blq) + '">✕ todos</button>' : ''}</div>
           ${porCat.length ? hbars(porCat, GW, null, 'data-cat') : '<div class="empty">Sin gastos en este periodo.</div>'}
           <p class="small muted" style="margin-bottom:0">Suma ${eur(GW, 0)}${g.imp || g.blq === 'imprevistos' ? '' : ' (sin imprevistos)'}. Toca una categoría para verla con lupa.</p></div>
@@ -1472,12 +1477,16 @@ async function viewGraficos() {
     const xAxis = { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } };
     const legend = { position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, useBorderRadius: true, borderRadius: 2 } };
     const labels = B.map((b) => b.l); const hover = { mode: 'index', intersect: false };
-    const ds = [{ label: 'Ingresos', data: B.map((b) => round2(cur.ingresos.filter((x) => inB(b, x.r.fecha)).reduce((s, x) => s + x.v, 0))), backgroundColor: v.s[5], stack: 'i', borderRadius: 4, maxBarThickness: 26 }];
+    const dentro = (m) => m >= mDesde && m <= ym(to); const tono = (c, m) => (dentro(m) ? c : `${c}55`);
+    const ds = [{ label: 'Ingresos', data: esData.map((x) => x.I), backgroundColor: esData.map((x) => tono(v.s[5], x.m)), stack: 'i', borderRadius: 4, maxBarThickness: 30 }];
     for (const [k, l] of BLQ_DEF) {
-      const data = B.map((b) => round2(gastosAll.filter((x) => x.bloque === k && inB(b, x.r.fecha)).reduce((s, x) => s + x.v, 0)));
-      if (data.some((x) => x)) ds.push({ label: l, data, backgroundColor: COL[k], stack: 'g', borderColor: v.surface, borderWidth: { top: 1 }, maxBarThickness: 26 });
+      const data = esData.map((x) => x.b[k]);
+      if (data.some((x) => x)) ds.push({ label: l, data, backgroundColor: esData.map((x) => tono(COL[k], x.m)), stack: 'g', borderColor: v.surface, borderWidth: { top: 1 }, maxBarThickness: 30 });
     }
-    S.charts.push(new Chart($('#g1'), { type: 'bar', data: { labels, datasets: ds }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend, tooltip: money }, scales: { x: { ...xAxis, stacked: true }, y: { ...yAxis, stacked: true } }, datasets: { bar: { categoryPercentage: 0.7, barPercentage: 0.9 } } } }));
+    const esLabels = mesesES.map((m) => `${MESES[Number(m.slice(5)) - 1]}${mesesES[0].slice(0, 4) !== mHasta.slice(0, 4) ? ` ${m.slice(2, 4)}` : ''}`);
+    const solid = [v.s[5], ...BLQ_DEF.filter(([k]) => esData.some((x) => x.b[k])).map(([k]) => COL[k])];
+    const legendES = { ...legend, labels: { ...legend.labels, generateLabels: (ch) => Chart.defaults.plugins.legend.labels.generateLabels(ch).map((l, i) => ({ ...l, fillStyle: solid[i], strokeStyle: solid[i] })) } };
+    S.charts.push(new Chart($('#g1'), { type: 'bar', data: { labels: esLabels, datasets: ds }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend: legendES, tooltip: money }, scales: { x: { ...xAxis, stacked: true }, y: { ...yAxis, stacked: true } }, datasets: { bar: { categoryPercentage: 0.7, barPercentage: 0.9 } } } }));
     // ahorro acumulado (con prorrateo opcional de lo mensual) y, debajo, lo invertido acumulado
     const mensual = (x, ing) => ing || x.bloque === 'fijos' || x.bloque === 'financieros';
     const tramo = (b, x, ing) => {

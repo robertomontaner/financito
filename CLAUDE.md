@@ -76,7 +76,7 @@ Las líneas son aproximadas. Busca por el nombre de la función.
   - **Panorama** (sin filtros), una sola historia que cuadra:
     - indicadores: ingresos, gastos (todos, diciendo cuánto son imprevistos), ahorro = ingresos − gastos y «de ello, invertido». Se comparan con la media de los 12 meses anteriores escalada al periodo (`gRefs`, `cmp`).
     - «Cómo se reparte lo que entra»: cascada en HTML (`.wf-*`): ingresos − cada bloque (`BLQ_DEF`) = ahorro, y debajo a dónde fue ese ahorro con `Libro.aplicacion` (`APL_DEF`), que suma lo mismo. Tocar un tramo de gasto filtra «En qué se va» por ese bloque (`g.blq`).
-    - «Entra y sale» (barras: ingresos frente a gastos apilados por bloque con los mismos colores), «En qué se va», «De dónde entra», ahorro acumulado («Repartido por días» por defecto, `g.rep`), «Desde dónde pagas», imprevistos y patrimonio.
+    - «Entra y sale» siempre por meses (decisión del usuario): los del periodo y, si son menos de 6, los anteriores en tono claro para dar contexto; ingresos frente a gastos apilados por bloque con los mismos colores, «En qué se va», «De dónde entra», ahorro acumulado («Repartido por días» por defecto, `g.rep`), «Desde dónde pagas», imprevistos y patrimonio.
     - Tocar una categoría o un banco entra en lupa.
   - **Lupa** (`g.cat` y/o `g.banco`): franja «Viendo solo…» con «✕ Quitar lupa»; indicadores (gastado, frente a la media de 12 meses, hace un año, límite del mes o saldo del banco); barras de los últimos 12 meses con media y límite; «Dónde se va» agrupado por concepto (`conceptoKey`); desde qué banco se paga (o en qué categorías, si es lupa de banco); lista de movimientos.
   - Cubetas (`gBuckets`): por día hasta 14 días, por semana hasta 130, luego por mes.
