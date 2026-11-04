@@ -441,7 +441,7 @@ function viewInicio() {
     ${top.length ? `<h2>En qué se va este mes</h2><div class="card"><ul class="list">${top.map(([c, v]) => `<li><div class="grow"><div class="t">${esc(L.nombre(c))}</div><div class="bar"><span style="width:${Math.min(100, (v / (top[0][1] || 1)) * 100)}%"></span></div></div><div class="amount">${eur(v)}</div></li>`).join('')}</ul></div>` : ''}
 
     <h2>Tus cuentas</h2>
-    ${L.inicio ? `<div class="card"><ul class="list">${tes.map((c) => { const s = L.balanceToDate(c.codigo); return `<li class="tap" data-cta="${esc(c.codigo)}"><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="s">${esc(displayGroup(c))}</div></div><div class="amount ${s < 0 ? 'neg' : ''}">${eur(s)}</div></li>`; }).join('') || '<li class="muted">Sin saldo en ninguna cuenta</li>'}</ul></div>`
+    ${L.inicio ? `<div class="card"><ul class="list">${tes.map((c) => { const s = L.balanceToDate(c.codigo); return `<li class="tap" data-cta="${esc(c.codigo)}"><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="s">${esc(displayGroup(c))}</div>${c.notas ? `<div class="cta-nota">📝 ${esc(c.notas)}</div>` : ''}</div><div class="amount ${s < 0 ? 'neg' : ''}">${eur(s)}</div></li>`; }).join('') || '<li class="muted">Sin saldo en ninguna cuenta</li>'}</ul></div>`
     : '<div class="card"><p style="margin:0 0 10px">Para ver cuánto tienes en cada banco, mete los saldos que tienes hoy (o el día que empieces a usar Financito).</p><button class="btn primary block" id="goap">Introducir saldos iniciales</button></div>'}
 
     <h2>Últimos movimientos</h2>
@@ -1828,7 +1828,7 @@ function infCuadre() {
       <p class="small" style="margin:6px 0 10px">Escribe lo que dice cada banco. Solo se revisan las cuentas que rellenes: las que dejes en blanco no se tocan, así que puedes cerrar una o dos sueltas. Al guardar, cada diferencia se apunta como corrección.</p>
       <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap"><div class="field grow" style="margin:0"><label class="lbl" for="cfecha">Saldos a fecha de</label><input type="date" id="cfecha" value="${esc(fecha)}" max="${esc(hoy)}"></div>${fecha !== hoy ? '<button class="btn sm" id="fhoy" style="margin-bottom:4px">Volver a hoy</button>' : ''}</div>
       <p class="small muted" style="margin:6px 0 0">${fecha === hoy ? 'Hoy: se compara con todo lo apuntado hasta ahora.' : `Se compara con lo apuntado hasta el ${esc(shortDate(fecha))} incluido, y la corrección se apunta con esa fecha.`}</p></div>
-    <div class="card"><ul class="list">${accs.map((c) => { const lib = L.balanceToDate(c.codigo, fecha); const lr = lastReal(c.codigo); return `<li style="flex-wrap:wrap"><span class="pk-ic">${emojiFor(c)}</span><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="s">Según Financito: <strong>${eur(lib)}</strong>${lr ? ` · último cierre el ${esc(shortDate(normDate(lr.fecha)))}` : ''}</div></div>
+    <div class="card"><ul class="list">${accs.map((c) => { const lib = L.balanceToDate(c.codigo, fecha); const lr = lastReal(c.codigo); return `<li style="flex-wrap:wrap"><span class="pk-ic">${emojiFor(c)}</span><div class="grow"><div class="t">${esc(c.nombre)}</div>${c.notas ? `<div class="cta-nota">📝 ${esc(c.notas)}</div>` : ''}<div class="s">Según Financito: <strong>${eur(lib)}</strong>${lr ? ` · último cierre el ${esc(shortDate(normDate(lr.fecha)))}` : ''}</div></div>
       <input type="text" inputmode="decimal" data-real="${esc(c.codigo)}" value="${esc(S.cuadreVals[c.codigo] || '')}" placeholder="En tu banco" aria-label="Saldo en tu banco de ${esc(c.nombre)}" style="width:120px;min-height:38px;padding:7px 10px;text-align:right">
       <div data-diff="${esc(c.codigo)}" class="small" style="width:100%"></div></li>`; }).join('')}</ul></div>
     <button class="btn primary block" id="fixall" style="margin-top:12px" disabled>Guardar cierre</button>
@@ -1888,7 +1888,7 @@ function viewAjustes() {
   const pre = (L.db.Prestamos || []).filter((p) => p.nombre);
   const groups = {}; L.cuentas.forEach((c) => (groups[KIND_LABEL[kindOf(c)]] ??= []).push(c));
   const listOf = (kinds) => L.cuentas.filter((c) => kinds.includes(kindOf(c)) && !SYS.has(c.codigo)).sort((a, b) => kinds.indexOf(kindOf(a)) - kinds.indexOf(kindOf(b)));
-  const accLi = (c, saldo) => `<li class="tap" data-acc="${esc(c.codigo)}"><div class="grow"><div class="t">${esc(c.nombre)}${L.isInv(c.codigo) ? ' <span class="chip ok">inversión</span>' : ''}${c.codigo === L.principal ? ' <span class="chip ok">★ principal</span>' : ''}${c.codigo === L.fondo ? ' <span class="chip">fondo imprevistos</span>' : ''}${c.activa === 0 || c.activa === '0' ? ' <span class="chip">oculta</span>' : ''}</div><div class="s">${esc(displayGroup(c))}</div></div>${saldo && L.inicio ? `<div class="amount">${eur(L.balanceToDate(c.codigo))}</div>` : ''}</li>`;
+  const accLi = (c, saldo) => `<li class="tap" data-acc="${esc(c.codigo)}"><div class="grow"><div class="t">${esc(c.nombre)}${L.isInv(c.codigo) ? ' <span class="chip ok">inversión</span>' : ''}${c.codigo === L.principal ? ' <span class="chip ok">★ principal</span>' : ''}${c.codigo === L.fondo ? ' <span class="chip">fondo imprevistos</span>' : ''}${c.activa === 0 || c.activa === '0' ? ' <span class="chip">oculta</span>' : ''}</div><div class="s">${esc(displayGroup(c))}</div>${c.notas ? `<div class="cta-nota">📝 ${esc(c.notas)}</div>` : ''}</div>${saldo && L.inicio ? `<div class="amount">${eur(L.balanceToDate(c.codigo))}</div>` : ''}</li>`;
   view().innerHTML = `
     <h2 style="margin-top:4px">Mis cuentas</h2>
     <div class="card"><p class="small muted" style="margin-top:0">Donde tienes (o debes) el dinero: bancos, efectivo, inversiones, bienes y deudas.</p>
@@ -2064,6 +2064,7 @@ function editCuenta(code, kind) {
   const fields = [{ key: 'nombre', label: 'Nombre', required: true }];
   if (k === 'dinero') fields.push({ key: 'grupo', label: 'Tipo', type: 'select', options: [['Tesorería', 'Banco o efectivo'], ['Inversiones', 'Inversión (Trade Republic, MyInvestor, fondos…)']], hint: 'Lo que traspases a una cuenta de inversión cuenta como «invertido» en Inicio, PyG, Gráficos y el reporte.' });
   if (k === 'gasto') fields.push({ key: 'grupo', label: 'Grupo', type: 'select', options: [...new Set(['Gastos variables', 'Gastos fijos', ...L.cuentas.filter((x) => x.tipo === 'gasto').map((x) => x.grupo)])].map((g) => [g, g]) });
+  if (['dinero', 'bien', 'deuda'].includes(k)) fields.push({ key: 'notas', label: 'Nota (opcional)', type: 'textarea', hint: 'Para acordarte de algo de esta cuenta. Ej.: «9.000 € son colchón al 5 % hasta nov. 2027». Sale debajo del nombre en Inicio, Ajustes y el cierre de saldos.' });
   fields.push({ key: 'activa', label: 'Visible en los formularios', type: 'checkbox' });
   const extra = c ? `<p class="hint">Código contable: ${esc(c.codigo)} · ${esc(c.tipo)}</p>` : '';
   formModal({

@@ -135,6 +135,7 @@ Las líneas son aproximadas. Busca por el nombre de la función.
 - `Config` (clave/valor):
   - `inicio` es la fecha de apertura; antes de ella solo cuenta la PyG, no los saldos.
   - `cuenta_principal` (por defecto 5721) y `cuenta_fondo` (por defecto 5726).
+- `Cuentas`: `codigo, nombre, tipo, grupo, orden, activa, notas`. `notas` es una nota libre de la cuenta (bancos, bienes y deudas), que se edita en Ajustes → cuenta y sale debajo del nombre en Inicio, Ajustes y el cierre de saldos (`.cta-nota`).
 - `Inversiones`: `id, nombre, tipo, cuenta, fecha_inicio, importe_inicial, valor_actual, fecha_valor, fecha_fin, importe_final, notas, borrado`.
 - Las pestañas nuevas se crean solas con `ensureTabs`, y las columnas nuevas se añaden con la migración de cabeceras en `load`. Para añadir una columna basta con añadirla al final del array en `TABLES`.
 
@@ -197,6 +198,7 @@ Hacer push a `main` en `robertomontaner/financito`; GitHub Pages despliega en un
   - Gráficos e Inversiones se abren desde la topbar, no desde la barra inferior.
 - **Inversión como ahorro:** no se crea categoría de gasto para lo invertido; se enseña como aplicación del ahorro. El usuario no quiere enlazar los traspasos con la sección Inversiones (lo que hay en la cuenta no coincide con lo que mete).
 - **Imprevistos:** se quedan como gasto con clase, sin provisión. La opción de «provisión» con una cuota mensual en Ajustes se ofreció y quedó sin decidir.
+- **Dinero apartado dentro de una cuenta** (p. ej. el colchón en Ibercaja, que en el banco está mezclado con el día a día): una sola cuenta, igual que en el banco, y una nota en la cuenta. Se ofrecieron «apartados» (saldo disponible frente a apartado) y el usuario los descartó por complicar.
 - **Login:** se mantiene Google con renovación silenciosa. La alternativa de un login propio (Apps Script pegado a la hoja con contraseña) se ofreció; el usuario la valorará si la renovación le molesta.
 
 ## Pendiente o ideas

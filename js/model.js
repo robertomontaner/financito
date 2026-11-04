@@ -1,7 +1,7 @@
 // Modelo contable: esquema de la hoja, plan de cuentas y cálculos (mayor, PyG, balance, automatizaciones).
 
 export const TABLES = {
-  Cuentas: ['codigo', 'nombre', 'tipo', 'grupo', 'orden', 'activa'],
+  Cuentas: ['codigo', 'nombre', 'tipo', 'grupo', 'orden', 'activa', 'notas'],
   Diario: ['id', 'asiento', 'fecha', 'concepto', 'debe', 'haber', 'importe', 'clase', 'origen', 'notas', 'creado', 'borrado', 'confirmado'],
   Recurrentes: ['id', 'nombre', 'dia', 'debe', 'haber', 'importe', 'clase', 'desde', 'hasta', 'activo'],
   Activos: ['id', 'nombre', 'cuenta', 'fecha_alta', 'valor', 'vida_meses', 'residual', 'activo'],

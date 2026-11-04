@@ -611,3 +611,6 @@ p .tip-i { margin: 0 2px; cursor: default; }
 .ix-steps > li { margin-bottom: 16px; }
 .ix-steps textarea { width: 100%; margin: 8px 0; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
 @media (max-width: 520px) { .ix-bot { padding-left: 0; } .ix-top { flex-wrap: wrap; } .ix-con { white-space: normal; } }
+
+/* nota de una cuenta (Ajustes → cuenta → Nota) */
+.cta-nota { font-size: 12.5px; color: var(--text); background: var(--surface-2); border-radius: 8px; padding: 4px 8px; margin-top: 4px; white-space: pre-wrap; display: inline-block; max-width: 100%; }
