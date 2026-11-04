@@ -3,6 +3,7 @@ import { auth, AuthError, SheetsStore, LocalStore } from './store.js';
 import {
   Libro, TABLES, CLASES, uid, round2, num, truthy, todayISO, ym, addMonths, eur, fmt, MESES, mesLargo, normDate, cuadroPrestamo, participacion, pad, kindOf, KIND_LABEL, displayGroup, nextCode, lastDay, monthsBetween,
 } from './model.js';
+import { initImport, viewImportar, abrirImportar } from './importar.js';
 
 // ---------------- estado y utilidades de UI ----------------
 const S = { store: null, libro: null, loading: false, mes: ym(todayISO()), year: Number(todayISO().slice(0, 4)), informe: 'libro', periodo: 'mes', apuntar: 'gasto', diario: { q: '', mes: '', cuenta: '', n: 80 } };
@@ -397,15 +398,15 @@ new MutationObserver(colsLayout).observe(document.getElementById('view'), { chil
 DESK.addEventListener('change', () => render());
 
 // ---------------- router ----------------
-const ROUTES = { inicio: viewInicio, mes: viewMes, apuntar: viewApuntar, diario: viewDiario, informes: viewInformes, ajustes: viewAjustes, graficos: viewGraficos, inversiones: viewInversiones };
+const ROUTES = { inicio: viewInicio, mes: viewMes, apuntar: viewApuntar, diario: viewDiario, informes: viewInformes, ajustes: viewAjustes, graficos: viewGraficos, inversiones: viewInversiones, importar: viewImportar };
 function render() {
   if (!S.libro) return;
   const r = (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'inicio';
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.r === r));
-  $('#title').textContent = { inicio: 'Financito', mes: 'Mes', apuntar: 'Apuntar', diario: 'Movimientos', informes: 'Informes', ajustes: 'Ajustes', graficos: 'Gráficos', inversiones: 'Inversiones' }[r] || 'Financito';
+  $('#title').textContent = { inicio: 'Financito', mes: 'Mes', apuntar: 'Apuntar', diario: 'Movimientos', informes: 'Informes', ajustes: 'Ajustes', graficos: 'Gráficos', inversiones: 'Inversiones', importar: 'Importar' }[r] || 'Financito';
   $('#topbar-actions').innerHTML = `${S.store.kind === 'demo' ? '<span class="chip">demo</span>' : ''}<a href="#/inversiones" class="iconbtn ${r === 'inversiones' ? 'on' : ''}" aria-label="Inversiones" title="Inversiones"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></a><a href="#/graficos" class="iconbtn ${r === 'graficos' ? 'on' : ''}" aria-label="Gráficos" title="Gráficos"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></a><button class="iconbtn bell" id="bell" aria-label="Por confirmar" title="Automáticos por confirmar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>${(() => { const n = avisos(); return n ? `<span class="badge">${n}</span>` : ''; })()}</button><a href="#/ajustes" class="iconbtn ${r === 'ajustes' ? 'on' : ''}" aria-label="Ajustes">⚙</a>`;
   $('#bell').onclick = abrirConfirmar;
-  view().classList.toggle('wide', ['graficos', 'informes', 'inversiones'].includes(r));
+  view().classList.toggle('wide', ['graficos', 'informes', 'inversiones', 'importar'].includes(r));
   view().classList.toggle('cols', ['inicio', 'mes', 'ajustes'].includes(r));
   (ROUTES[r] || viewInicio)();
   view().focus({ preventScroll: true });
@@ -620,7 +621,7 @@ function viewMes() {
     return;
   }
 
-  const ingHtml = P.ingresos.length ? `<ul class="list">${P.ingresos.map((i) => `<li class="${i.extra ? '' : 'tap'}" ${i.extra ? '' : `data-ing="${esc(i.linea)}"`}><span class="pk-ic">${emojiFor(L.byCode[i.code])}</span><div class="grow"><div class="t">${esc(i.nombre)}${i.extra ? ' <span class="chip">fuera del plan</span>' : ''}</div><div class="s">${i.extra ? '' : `previsto ${eur(i.plan, 0)} · `}entrado ${eur(i.real)}</div>${i.plan ? `<div class="bar"><span style="width:${Math.min(100, (i.real / i.plan) * 100)}%"></span></div>` : ''}</div>${money(i.plan || i.real)}</li>`).join('')}</ul>` : '<div class="empty">Añade tus fuentes de ingreso previstas (nómina, cuenta propia…).</div>';
+  const ingHtml = P.ingresos.length ? `<ul class="list">${P.ingresos.map((i) => `<li class="${i.extra ? '' : 'tap'}" ${i.extra ? '' : i.auto ? `data-fijo="${esc(i.id)}"` : `data-ing="${esc(i.linea)}"`}><span class="pk-ic">${emojiFor(L.byCode[i.code])}</span><div class="grow"><div class="t">${esc(i.nombre)}${i.extra ? ' <span class="chip">fuera del plan</span>' : ''}${i.auto ? ` ${i.real > 0 ? '<span class="chip ok">✓ cobrado</span>' : i.override === 0 ? '' : '<span class="chip">pendiente</span>'}${i.override !== null && !i.gen ? `<span class="chip">${i.override ? 'importe especial' : 'saltado'}</span>` : ''}` : ''}</div><div class="s">${i.auto ? `día ${esc(i.dia)} · se apunta solo${i.real || i.override === 0 ? '' : ' · aún no ha llegado'}` : `${i.extra ? '' : `previsto ${eur(i.plan, 0)} · `}entrado ${eur(i.real)}`}</div>${i.plan ? `<div class="bar"><span style="width:${Math.min(100, (i.real / i.plan) * 100)}%"></span></div>` : ''}</div>${money(i.plan || i.real)}</li>`).join('')}</ul>` : '<div class="empty">Añade tus fuentes de ingreso previstas (nómina, cuenta propia…).</div>';
   const linesHtml = ['sobre', 'fondo', 'ahorro'].map((g) => {
     const list = P.lines.filter((l) => l.grupo === g); if (!list.length) return '';
     return `<h3>${GRUPO_REP[g][0]}</h3><ul class="list">${list.map((l) => {
@@ -690,7 +691,7 @@ function viewMes() {
 
 // tocar un gasto fijo en Mes: cambiar solo este mes o la automatización
 function fijoMes(id) {
-  const L = S.libro; const m = S.mes; const f = L.planMes(m).fijos.find((x) => String(x.id) === String(id)); if (!f) return;
+  const L = S.libro; const m = S.mes; const P = L.planMes(m); const f = [...P.fijos, ...P.ingresos.filter((x) => x.auto)].find((x) => String(x.id) === String(id)); if (!f) return;
   if (!f.activo) { editRecurrente(id); return; }
   const base = num(f.rec.importe);
   openModal(`<h2>${esc(f.nombre)}</h2>
@@ -819,7 +820,7 @@ function viewDiario() {
   const saldoCuenta = st.cuenta ? L.balanceToDate(st.cuenta) : null;
 
   view().innerHTML = `
-    <div class="field"><input type="search" id="q" placeholder="Buscar concepto, cuenta, importe…" value="${esc(st.q)}"></div>
+    <div class="row" style="gap:8px;margin-bottom:12px"><input type="search" id="q" class="grow" placeholder="Buscar concepto, cuenta, importe…" value="${esc(st.q)}"><a class="btn" href="#/importar" id="goimp" title="Importar un extracto del banco">⇪ Importar</a></div>
     <div class="two">
       <select id="fm"><option value="">Todos los meses</option>${months.map((m) => `<option value="${m}" ${st.mes === m ? 'selected' : ''}>${esc(mesLargo(m))}</option>`).join('')}</select>
       <select id="fc"><option value="">Todas las cuentas</option>${accountOptions(() => true, st.cuenta)}</select>
@@ -827,6 +828,7 @@ function viewDiario() {
     <div class="row between small muted" style="margin:10px 2px 0"><span>${rows.length} movimientos</span><span>${tot ? `Gastos: ${eur(tot)}` : ''}${saldoCuenta !== null ? ` · Saldo cuenta: ${eur(saldoCuenta)}` : ''}</span></div>
     <div class="card" style="margin-top:8px">${html || '<div class="empty">Nada por aquí.</div>'}
     ${rows.length > shown.length ? '<button class="btn block" id="more" style="margin-top:10px">Ver más</button>' : ''}</div>`;
+  $('#goimp').onclick = (e) => { e.preventDefault(); abrirImportar('extracto'); };
   const q = $('#q'); q.oninput = () => { st.q = q.value; clearTimeout(q._t); q._t = setTimeout(() => { viewDiario(); const n = $('#q'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 250); };
   $('#fm').onchange = (e) => { st.mes = e.target.value; st.n = 80; viewDiario(); };
   $('#fc').onchange = (e) => { st.cuenta = e.target.value; st.n = 80; viewDiario(); };
@@ -1817,24 +1819,29 @@ function cierreHtml(c, open) {
 function infCuadre() {
   const L = S.libro;
   if (!L.inicio) { $('#inf').innerHTML = `${needsApertura()}<p class="muted">Cuando metas los saldos iniciales podrás comprobar aquí, cuenta por cuenta, que lo que dice Financito coincide con lo que tienes de verdad en el banco.</p>`; $('#goap')?.addEventListener('click', () => setTimeout(apertura, 50)); return; }
-  const fecha = todayISO();
+  const hoy = todayISO(); S.cuadreFecha ??= hoy; S.cuadreVals ??= {};
+  const fecha = S.cuadreFecha > hoy ? hoy : S.cuadreFecha;
   const accs = L.cuentas.filter((c) => kindOf(c) === 'dinero' && (c.activa !== 0 || L.balanceToDate(c.codigo)));
   const lastReal = (code) => (L.db.Saldos || []).filter((s2) => String(s2.cuenta) === code).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0];
   const cierres = cierresHechos();
   $('#inf').innerHTML = `<div class="card" style="margin-bottom:12px"><strong>Cierre de saldos</strong>
-      <p class="small" style="margin:6px 0 0">Escribe lo que dice ahora cada banco (deja en blanco los que no quieras revisar). Se compara con todo lo que hay apuntado hasta hoy y, al guardar, cada diferencia se apunta como corrección. Hazlo cuando quieras: es un refresco de descuadres.</p></div>
+      <p class="small" style="margin:6px 0 10px">Escribe lo que dice cada banco. Solo se revisan las cuentas que rellenes: las que dejes en blanco no se tocan, así que puedes cerrar una o dos sueltas. Al guardar, cada diferencia se apunta como corrección.</p>
+      <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap"><div class="field grow" style="margin:0"><label class="lbl" for="cfecha">Saldos a fecha de</label><input type="date" id="cfecha" value="${esc(fecha)}" max="${esc(hoy)}"></div>${fecha !== hoy ? '<button class="btn sm" id="fhoy" style="margin-bottom:4px">Volver a hoy</button>' : ''}</div>
+      <p class="small muted" style="margin:6px 0 0">${fecha === hoy ? 'Hoy: se compara con todo lo apuntado hasta ahora.' : `Se compara con lo apuntado hasta el ${esc(shortDate(fecha))} incluido, y la corrección se apunta con esa fecha.`}</p></div>
     <div class="card"><ul class="list">${accs.map((c) => { const lib = L.balanceToDate(c.codigo, fecha); const lr = lastReal(c.codigo); return `<li style="flex-wrap:wrap"><span class="pk-ic">${emojiFor(c)}</span><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="s">Según Financito: <strong>${eur(lib)}</strong>${lr ? ` · último cierre el ${esc(shortDate(normDate(lr.fecha)))}` : ''}</div></div>
-      <input type="text" inputmode="decimal" data-real="${esc(c.codigo)}" placeholder="En tu banco" aria-label="Saldo en tu banco de ${esc(c.nombre)}" style="width:120px;min-height:38px;padding:7px 10px;text-align:right">
+      <input type="text" inputmode="decimal" data-real="${esc(c.codigo)}" value="${esc(S.cuadreVals[c.codigo] || '')}" placeholder="En tu banco" aria-label="Saldo en tu banco de ${esc(c.nombre)}" style="width:120px;min-height:38px;padding:7px 10px;text-align:right">
       <div data-diff="${esc(c.codigo)}" class="small" style="width:100%"></div></li>`; }).join('')}</ul></div>
     <button class="btn primary block" id="fixall" style="margin-top:12px" disabled>Guardar cierre</button>
     <p class="small muted">Los descuadres de bancos van a «Descuadres» (659, si falta dinero) o «Descuadres a favor» (759, si sobra) y salen en la PyG. En inversiones la diferencia es revalorización (663 pérdida, 763 ganancia). Si luego encuentras el movimiento que faltaba, apúntalo y borra la corrección.</p>
     <h3 style="margin-top:18px">Cierres hechos</h3>
     ${cierres.length ? `<div class="card cierres">${cierres.slice(0, 12).map((c, i) => cierreHtml(c, i === 0)).join('')}</div>` : '<p class="small muted">Todavía no has hecho ninguno.</p>'}`;
   const state = {};
+  $('#cfecha').onchange = (e) => { S.cuadreFecha = e.target.value || hoy; infCuadre(); };
+  $('#fhoy')?.addEventListener('click', () => { S.cuadreFecha = hoy; infCuadre(); });
   const refreshBtn = () => { const n = Object.values(state).filter((x) => Math.abs(x.d) >= 0.01).length; const ok = Object.values(state).length; const b = $('#fixall'); b.disabled = !ok; b.textContent = n ? `Guardar cierre y corregir ${n} diferencia${n > 1 ? 's' : ''}` : 'Guardar cierre'; };
   $$('[data-real]').forEach((inp) => {
     inp.oninput = () => {
-      const code = inp.dataset.real; const box = $(`[data-diff="${code}"]`); const inv = L.isInv(code);
+      const code = inp.dataset.real; const box = $(`[data-diff="${code}"]`); const inv = L.isInv(code); S.cuadreVals[code] = inp.value;
       if (!inp.value.trim()) { box.innerHTML = ''; delete state[code]; refreshBtn(); return; }
       const real = num(inp.value); const d = round2(real - L.balanceToDate(code, fecha)); state[code] = { real, d, inv };
       const dest = destinoAjuste(inv, d);
@@ -1844,16 +1851,18 @@ function infCuadre() {
       refreshBtn();
     };
   });
+  $$('[data-real]').forEach((inp) => { if (inp.value) inp.oninput(); });
   $$('[data-mov]', $('#inf')).forEach((a2) => { a2.onclick = (e) => { e.preventDefault(); editEntry(a2.dataset.mov); }; });
   $('#fixall').onclick = async () => {
     const entries = Object.entries(state); const fixes = entries.filter(([, x]) => Math.abs(x.d) >= 0.01);
-    if (fixes.length && !confirm(`Se apuntarán ${fixes.length} correcciones con fecha de hoy:\n${fixes.map(([c, x]) => `· ${L.nombre(c)}: ${x.d > 0 ? '+' : ''}${eur(x.d)} → ${L.nombre(destinoAjuste(x.inv, x.d))}`).join('\n')}\n\n¿Seguir?`)) return;
+    if (fixes.length && !confirm(`Se apuntará${fixes.length > 1 ? 'n' : ''} ${fixes.length} correcci${fixes.length > 1 ? 'ones' : 'ón'} con fecha ${fecha === hoy ? 'de hoy' : shortDate(fecha)}:\n${fixes.map(([c, x]) => `· ${L.nombre(c)}: ${x.d > 0 ? '+' : ''}${eur(x.d)} → ${L.nombre(destinoAjuste(x.inv, x.d))}`).join('\n')}\n\n¿Seguir?`)) return;
     const btn = $('#fixall'); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
     try {
       const asiento = uid();
       const rows = fixes.map(([code, x]) => { const dest = destinoAjuste(x.inv, x.d); const [debe, haber] = x.d > 0 ? [code, dest] : [dest, code]; return newEntry({ asiento, fecha, concepto: x.inv ? `Revalorización ${L.nombre(code)}` : `Corrección de saldo ${L.nombre(code)}`, debe, haber, importe: Math.abs(x.d), clase: 'ajuste', origen: 'cuadre' }); });
       if (rows.length) await S.store.add('Diario', rows);
       await S.store.add('Saldos', entries.map(([code, x]) => ({ id: uid(), fecha, cuenta: code, saldo: x.real, notas: Math.abs(x.d) >= 0.01 ? 'corregido' : 'cuadra' })));
+      S.cuadreVals = {}; S.cuadreFecha = hoy;
       await reload(); toast(rows.length ? `Cierre guardado · ${rows.length} corrección${rows.length > 1 ? 'es' : ''}` : 'Cierre guardado: todo cuadra'); infCuadre();
       $('.cierres')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (e) { fail(e); infCuadre(); }
@@ -1918,7 +1927,9 @@ function viewAjustes() {
     <h2>Datos</h2>
     <div class="card stack">
       ${url ? `<a class="btn block" href="${esc(url)}" target="_blank" rel="noopener">Abrir la hoja en Google Sheets ↗</a>` : ''}
-      <label class="btn block" for="imp">Importar movimientos (JSON)</label><input type="file" id="imp" accept=".json,application/json" hidden>
+      <a class="btn block primary" href="#/importar" id="impext">Importar extracto del banco</a>
+      <button class="btn block" id="impcl">Importar con ayuda de Claude (Excel, capturas…)</button>
+      <label class="btn block" for="imp">Importar archivo de Financito (JSON)</label><input type="file" id="imp" accept=".json,application/json" hidden>
       <button class="btn block" id="exp">Descargar copia de seguridad (JSON)</button>
       ${S.store.kind === 'demo' ? '<button class="btn block" id="resetdemo">Reiniciar datos de ejemplo</button>' : ''}
       <button class="btn block danger" id="logout">${S.store.kind === 'demo' ? 'Salir del modo demo' : 'Cerrar sesión'}</button>
@@ -1936,6 +1947,8 @@ function viewAjustes() {
   $$('[data-new]').forEach((b) => { b.onclick = () => editCuenta(null, b.dataset.new); });
   $('#apertura').onclick = apertura;
   $('#imp').onchange = importar;
+  $('#impext').onclick = (e) => { e.preventDefault(); abrirImportar('extracto'); };
+  $('#impcl').onclick = () => abrirImportar('claude');
   $('#exp').onclick = exportar;
   $('#resetdemo')?.addEventListener('click', async () => { if (!confirm('¿Reiniciar los datos de ejemplo?')) return; S.store.reset(); await reload({ automations: true }); render(); });
   $('#logout').onclick = () => {
@@ -2095,34 +2108,10 @@ function apertura() {
   });
 }
 
+// el JSON de Ajustes pasa por la misma pantalla de revisión que el asistente con Claude
 async function importar(e) {
   const file = e.target.files[0]; if (!file) return;
-  try {
-    const data = JSON.parse(await file.text());
-    const L = S.libro;
-    const cuentas = (data.Cuentas || []).filter((c) => !L.byCode[String(c.codigo)]).map((c) => ({ ...c, codigo: String(c.codigo) }));
-    const existing = new Set(L.rows.map((r) => String(r.id)));
-    const diario = (data.Diario || []).filter((r) => !existing.has(String(r.id))).map((r) => ({ id: r.id || uid(), asiento: r.asiento || uid(), origen: r.origen || 'importado', creado: todayISO(), borrado: '', notas: '', ...r, importe: round2(num(r.importe)) }));
-    // además de movimientos y cuentas, el fichero puede traer bienes, automatizaciones (por id: se actualizan o se añaden), inversiones y ajustes
-    const byId = (t) => new Map((L.db[t] || []).map((x) => [String(x.id), x]));
-    const actIds = byId('Activos'); const invIds = byId('Inversiones'); const recIds = byId('Recurrentes');
-    const activos = (data.Activos || []).filter((x) => !actIds.has(String(x.id)));
-    const inversiones = (data.Inversiones || []).filter((x) => !invIds.has(String(x.id)));
-    const recUpd = (data.Recurrentes || []).filter((x) => recIds.has(String(x.id))).map((x) => ({ ...recIds.get(String(x.id)), ...x }));
-    const recNew = (data.Recurrentes || []).filter((x) => !recIds.has(String(x.id)));
-    const cfg = Object.entries(data.Config || {});
-    const partes = [`${diario.length} movimientos`, cuentas.length && `${cuentas.length} cuentas nuevas`, activos.length && `${activos.length} bienes`,
-      (recUpd.length + recNew.length) && `${recUpd.length + recNew.length} automatizaciones`, inversiones.length && `${inversiones.length} inversiones`, cfg.length && 'ajustes'].filter(Boolean);
-    if (!confirm(`Importar ${partes.join(', ')}?`)) return;
-    if (cuentas.length) await S.store.add('Cuentas', cuentas);
-    for (let i = 0; i < diario.length; i += 400) await S.store.add('Diario', diario.slice(i, i + 400));
-    if (activos.length) await S.store.add('Activos', activos);
-    if (inversiones.length) await S.store.add('Inversiones', inversiones);
-    if (recUpd.length) await S.store.update('Recurrentes', recUpd);
-    if (recNew.length) await S.store.add('Recurrentes', recNew);
-    for (const [k, v] of cfg) await setConfig(k, v);
-    await reload(); toast(`Importado: ${partes.join(', ')}`); render();
-  } catch (err) { fail(err); } finally { e.target.value = ''; }
+  try { abrirImportar('claude', { autoText: await file.text() }); } catch (err) { fail(err); } finally { e.target.value = ''; }
 }
 function exportar() {
   const db = structuredClone(S.libro.db); Object.values(db).forEach((t) => t.forEach?.((o) => delete o._row));
@@ -2140,4 +2129,9 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadSW && !reloaded) { reloaded = true; location.reload(); } });
 }
 
+initImport({
+  S, $, $$, esc, toast, fail, view, render, reload, setConfig, openPicker, emojiFor, newEntry,
+  isGasto, isIngreso, isMoney, isPayer, isUsable: (c) => !!c && c.activa !== 0 && c.activa !== '0',
+  shortDate: (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: iso.slice(0, 4) === todayISO().slice(0, 4) ? undefined : '2-digit' }),
+});
 boot();

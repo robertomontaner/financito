@@ -28,6 +28,7 @@ Cómo está montada:
 | `js/store.js` | `auth` (OAuth implícito por redirección), `SheetsStore` (API v4 de Sheets), `LocalStore` (modo demo en localStorage `demo_db`) y `seedDemo` |
 | `js/model.js` | Esquema `TABLES`, plan de cuentas inicial y la clase `Libro`, con todos los cálculos contables. No toca el DOM |
 | `js/app.js` | Toda la interfaz (≈2000 líneas, por secciones; ver mapa abajo) |
+| `js/importar.js` | Importadores (ruta `#/importar`): extractos bancarios y asistente «con Claude». Recibe las utilidades de app.js con `initImport(ctx)`; ver sección abajo |
 | `css/app.css` | Estilos con tokens en `:root` y modo oscuro por `prefers-color-scheme`. Incluye los estilos de impresión del reporte |
 | `sw.js` | Service worker: red primero con `cache: 'no-cache'` y caché de respaldo. **Sube el número de `CACHE` (`financito-vN`) en cada cambio publicado** |
 
@@ -46,13 +47,13 @@ Las líneas son aproximadas. Busca por el nombre de la función.
 - **Arranque y sesión:**
   - `boot`: si el token ha caducado y ya hubo login, hace un login silencioso con `prompt=none`.
   - `keepSession`: renueva el token 5 minutos antes de caducar si el usuario no está escribiendo, y al volver a la pestaña. Guarda `login_hint` a partir de Drive `about`.
-- **Router:** `ROUTES` y `render()`. Las rutas son `inicio`, `mes`, `apuntar`, `diario`, `informes`, `ajustes`, `graficos` e `inversiones`.
+- **Router:** `ROUTES` y `render()`. Las rutas son `inicio`, `mes`, `apuntar`, `diario`, `informes`, `ajustes`, `graficos`, `inversiones` e `importar` (esta última se abre desde Movimientos «⇪ Importar» y desde Ajustes → Datos).
   - Las tres últimas cuelgan de iconos de la topbar.
   - `#view.wide` (1180 px) se usa en informes, gráficos e inversiones.
   - En escritorio (≥ 1000 px), Inicio, Mes y Ajustes van a dos columnas: `colsLayout` (un MutationObserver sobre `#view`) mete las tarjetas en `.cols2` (CSS `columns: 2`) y deja arriba, a todo el ancho, la cabecera (`.periodbar`, banners, `.mes-estado`, `.kpis`, `h1`); cada `h2` viaja con su tarjeta. En el móvil no se toca nada.
 - **Inicio:** `viewInicio`.
 - **Apuntar:** `viewApuntar` con plantillas de gasto (con casilla «Imprevisto»), ingreso, traspaso, compra de activo y libre. `editEntry` sirve para editar.
-- **Mes (plan de caja):** `viewMes`, `fijoMes` (importe especial solo para un mes), `copiarPlan`, `juntarRepetidas`, `editLinea`, `cfgMes`, `hacerReparto` y `deshacerReparto`. Arriba sale el estado de los traspasos del mes (`planMes().estado`: `hecho`, `pendiente`, `sin` o `previo`); los meses que empiezan antes de `inicio` se dan por hechos, porque se repartieron fuera de la app.
+- **Mes (plan de caja):** los ingresos automáticos (recurrentes con haber 7xx) salen en Ingresos como previstos aunque aún no hayan llegado (`planMes` los añade con `auto: true`, salvo que el plan ya tenga una línea de esa fuente); se tocan igual que un fijo (`fijoMes`). `viewMes`, `fijoMes` (importe especial solo para un mes), `copiarPlan`, `juntarRepetidas`, `editLinea`, `cfgMes`, `hacerReparto` y `deshacerReparto`. Arriba sale el estado de los traspasos del mes (`planMes().estado`: `hecho`, `pendiente`, `sin` o `previo`); los meses que empiezan antes de `inicio` se dan por hechos, porque se repartieron fuera de la app.
 - **Movimientos:** `viewDiario`.
 - **Informes** (`INFORMES`, con ayuda plegable `INF_HELP`):
   - `infLibro`: libro diario; cada asiento es una fila: [fecha + concepto] | debe | haber, con etiqueta Balance o PyG y el sentido del movimiento (sin número de asiento, decisión del usuario).
@@ -68,7 +69,7 @@ Las líneas son aproximadas. Busca por el nombre de la función.
   - `infBalance`: arriba el balance de situación en dos mitades (`balanceSheetHtml`): activo | pasivo + patrimonio neto, con bloques por grupo y el desglose de cada cuenta (el PN se desglosa en patrimonio inicial y ahorro acumulado). Tocar una cuenta abre su mayor. Debajo, la tabla mes a mes.
   - PyG y Balance llevan € y la cruz de lectura `crosshair` al pasar el ratón.
   - **Invertido:** las cuentas con grupo «Inversiones» (`Libro.isInv`; se marcan en Ajustes → cuenta → Tipo «Inversión») cuentan como inversión. `Libro.invertido(from, to)` suma el dinero nuevo traspasado a ellas, sin revalorizaciones. Sale en Inicio, PyG, Gráficos y el reporte. Lo que se mete a invertir es un traspaso, nunca un gasto.
-  - `infCuadre`: «Cierre de saldos». Siempre contra todo lo apuntado hasta hoy, sin elegir fecha (decisión del usuario: es un «refresco» de descuadres, no un cierre de fin de mes). El usuario mete el saldo real de cada banco, ve antes de guardar a qué cuenta irá cada diferencia (659/759, o 663/763 en inversiones) y se crea el asiento de corrección. Debajo, «Cierres hechos» (`cierresHechos`, `cierreHtml`): por fecha, Financito vs banco, diferencia y a dónde fue (enlace al movimiento).
+  - `infCuadre`: «Cierre de saldos». Por defecto a hoy, contra todo lo apuntado (decisión del usuario: es un «refresco» de descuadres, no un cierre de fin de mes). Se puede poner otra fecha («saldos a fecha de», `S.cuadreFecha`) y es parcial: solo se revisan las cuentas que se rellenan (`S.cuadreVals` guarda lo escrito al cambiar la fecha). El usuario mete el saldo real de cada banco, ve antes de guardar a qué cuenta irá cada diferencia (659/759, o 663/763 en inversiones) y se crea el asiento de corrección. Debajo, «Cierres hechos» (`cierresHechos`, `cierreHtml`): por fecha, Financito vs banco, diferencia y a dónde fue (enlace al movimiento).
   - `infReporte`: reporte ejecutivo de 2 páginas A4, impreso con `window.print()` y estilos `@media print`.
 - **Gráficos** (`viewGraficos`):
   - Filtros:
@@ -104,6 +105,16 @@ Las líneas son aproximadas. Busca por el nombre de la función.
     - plan contable avanzado (`editCuenta`);
     - importar y exportar JSON (`importar`, `exportar`). El JSON de importación admite `Cuentas`, `Diario`, `Activos`, `Inversiones`, `Recurrentes` (por id: actualiza o añade) y `Config` (objeto clave → valor).
 - **Campanita** (`abrirConfirmar`, `Libro.porConfirmar`): los movimientos generados por recurrentes y préstamos quedan pendientes (`Diario.confirmado` vacío) hasta que el usuario los confirma, edita o descarta. `Libro.duplicadosAuto` borra copias si dos dispositivos generan el mismo automático. La campanita también pide cada mes el cierre de saldos del mes anterior (`cierrePendiente`: no hay fila en `Saldos` con fecha ≥ fin del mes anterior) hasta que se haga en Informes → Bancos.
+
+### Importar (`js/importar.js`)
+
+- **Extracto del banco** (`pasoExtracto` → `pasoMapa` → `pasoClasificar`): se elige la cuenta y el archivo.
+  - Formatos: CSV y Excel (SheetJS 0.18.5 desde cdnjs; los «.xls» que son HTML o CSV también), Norma 43 (`parseN43`), CAMT.053 (`parseCAMT`) y OFX/QFX (`parseOFX`). `detectFormat` decide. SEPA no es formato de extracto: para eso están Norma 43 y CAMT.053.
+  - En CSV/Excel, `guessMapping` adivina la cabecera y las columnas (fecha, concepto, importe o cargo/abono, comisión, estado) y el usuario las corrige con vista previa. `parseNum`/`parseDate` aceptan formatos españoles e ingleses y números de serie de Excel.
+  - `prepararFilas`: propone la contrapartida aprendiendo del historial (`claveConcepto` + `buildIndex`), luego si menciona otra cuenta propia (traspaso) y luego por palabras clave (`KW`). Marca como «ya apuntado» lo que tiene un movimiento igual en esa cuenta (mismo importe y signo, ±3 días) o el mismo `origen` `ext:<hash>` de una importación anterior, y deja fuera lo anterior a `inicio`.
+  - Al clasificar uno a mano, los que tienen la misma clave de concepto se clasifican igual. Cada fila puede marcarse como imprevisto. `asientosDeFilas` crea los apuntes con `origen: ext:<hash>`.
+- **Con ayuda de Claude** (`pasoClaude` → `revisarJSON`): `promptClaude` genera las instrucciones con el plan de cuentas del usuario; este las pega en claude.ai con sus capturas, Excel o Sheets y pega la respuesta. `extraerJSON` saca los bloques ```json (uno o varios) y `planImport` valida (cuentas que no existen, fechas, importes negativos → se dan la vuelta, duplicados por firma fecha|debe|haber|importe) y enseña la revisión antes de importar. El JSON de Ajustes pasa por la misma revisión.
+- Para probar: fixtures de cada formato en un script de Playwright, siempre en **modo demo** (el usuario usa su cuenta real a diario: nunca probar en ella).
 
 ## Modelo de datos (pestañas de la hoja = `TABLES` en model.js)
 

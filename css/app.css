@@ -588,4 +588,26 @@ p .tip-i { margin: 0 2px; cursor: default; }
 .ci-t tr:last-child td { border-bottom: 0; }
 .ci-t .n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ci-t a { color: var(--accent); text-decoration: none; }
-@media (max-width: 560px) { .ci-t th:nth-child(2), .ci-t td:nth-child(2) { display: none; } .ci-t .ss-code { display: none; } }
+@media (max-width: 560px) { .ci-t:not(.keep) th:nth-child(2), .ci-t:not(.keep) td:nth-child(2) { display: none; } .ci-t .ss-code { display: none; } .ci-t.keep { font-size: 12.5px; } }
+
+/* Importar: extractos y asistente con Claude */
+.ix-bar { display: flex; align-items: center; gap: 12px; position: sticky; top: calc(env(safe-area-inset-top) + 58px); z-index: 5; }
+.ix-list { padding: 0 12px; }
+.ix-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.ix-row:last-child { border-bottom: 0; }
+.ix-row > input { margin-top: 3px; width: 18px; height: 18px; flex: none; accent-color: var(--accent); }
+.ix-row.off .ix-top { opacity: .55; }
+.ix-main { flex: 1; min-width: 0; }
+.ix-top { display: flex; gap: 10px; align-items: baseline; }
+.ix-date { color: var(--muted); font-size: 12.5px; flex: none; min-width: 48px; }
+.ix-con { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+.ix-amt { flex: none; font-variant-numeric: tabular-nums; font-weight: 650; }
+.ix-bot { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; padding-left: 58px; }
+.ix-cat { border: 1px solid var(--line); background: var(--surface-2); color: var(--text); border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.ix-cat small { color: var(--muted); font-size: 11px; }
+.ix-cat.none { border-style: dashed; border-color: var(--warn); color: var(--warn); background: transparent; font-weight: 600; }
+.gchip.sm { padding: 3px 9px; font-size: 12px; }
+.ix-steps { padding-left: 20px; margin: 0; }
+.ix-steps > li { margin-bottom: 16px; }
+.ix-steps textarea { width: 100%; margin: 8px 0; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+@media (max-width: 520px) { .ix-bot { padding-left: 0; } .ix-top { flex-wrap: wrap; } .ix-con { white-space: normal; } }

@@ -249,11 +249,22 @@ export class Libro {
       if (grupo === 'sobre') for (const r of this.activeRows) if (ym(r.fecha) === m && r.haber === code && this.tipo(r.debe) === 'gasto' && r.clase !== 'imprevisto') gastado += r.importe;
       lines.push({ ...x, linea, code, nombre: this.nombre(code), grupo, plan, real: done ? done.importe : 0, done, gastado: round2(gastado), row: x });
     }
-    // fuentes de ingreso que han entrado sin estar en el plan
+    // ingresos automáticos (recurrentes) de este mes: salen previstos aunque todavía no hayan llegado
     const enPlan = new Set(ingresos.map((i) => i.code));
+    const autoReal = {};
+    for (const r of this.db.Recurrentes || []) {
+      const code = String(r.haber);
+      if (!r.nombre || String(r.nombre).endsWith('(borrada)') || this.tipo(code) !== 'ingreso' || !truthy(r.activo)) continue;
+      if (String(r.desde).slice(0, 7) > m || (r.hasta && String(r.hasta).slice(0, 7) < m) || enPlan.has(code)) continue;
+      const gen = this.activeRows.filter((x) => x.origen === `rec:${r.id}:${m}`);
+      const real = round2(gen.reduce((s, x) => s + x.importe, 0)); const ov = this.recOverride(r.id, m);
+      autoReal[code] = round2((autoReal[code] || 0) + real);
+      ingresos.push({ id: r.id, auto: true, code, nombre: r.nombre, plan: gen.length ? real : (ov === null ? num(r.importe) : ov), real, override: ov, gen: gen[0], rec: r, activo: true, dia: r.dia });
+    }
+    // fuentes de ingreso que han entrado sin estar en el plan (descontando lo que ya cuentan los automáticos)
     for (const c of this.allCodes()) {
       if (this.tipo(c) !== 'ingreso' || enPlan.has(c)) continue;
-      const v = this.monthNet(c, m); if (Math.abs(v) > 0.004) ingresos.push({ code: c, nombre: this.nombre(c), plan: 0, real: v, extra: true });
+      const v = round2(this.monthNet(c, m) - (autoReal[c] || 0)); if (Math.abs(v) > 0.004) ingresos.push({ code: c, nombre: this.nombre(c), plan: 0, real: v, extra: true });
     }
     const legacyIng = all.find((x) => x.linea === 'ingresos' && !truthy(x.borrado));
     const ingresosPlan = ingresos.some((i) => !i.extra) ? round2(ingresos.reduce((s, i) => s + i.plan, 0)) : num(legacyIng?.importe ?? 0);
