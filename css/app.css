@@ -614,3 +614,25 @@ p .tip-i { margin: 0 2px; cursor: default; }
 
 /* nota de una cuenta (Ajustes → cuenta → Nota) */
 .cta-nota { font-size: 12.5px; color: var(--text); background: var(--surface-2); border-radius: 8px; padding: 4px 8px; margin-top: 4px; white-space: pre-wrap; display: inline-block; max-width: 100%; }
+
+/* Gráficos · panorama: cascada (ingresos − bloques = ahorro) y a dónde fue el ahorro */
+.wf { display: grid; gap: 4px; margin-top: 6px; }
+.wf-row { display: grid; grid-template-columns: minmax(110px, 26%) 1fr auto; align-items: center; gap: 10px; background: none; border: 0; padding: 6px 4px; border-radius: 8px; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.wf-row:hover:not(.static) { background: var(--surface-2); }
+.wf-row.static { cursor: default; }
+.wf-row.strong .wf-l, .wf-row.strong .wf-v { font-weight: 700; }
+.wf-l { font-size: 13.5px; display: flex; flex-direction: column; }
+.wf-l small { color: var(--muted); font-size: 11.5px; font-weight: 400; }
+.wf-track { position: relative; height: 18px; background: var(--surface-2); border-radius: 5px; }
+.wf-bar { position: absolute; top: 0; bottom: 0; border-radius: 5px; }
+.wf-v { font-variant-numeric: tabular-nums; min-width: 72px; text-align: right; }
+.wf-split { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.wf-apl { display: grid; grid-template-columns: minmax(110px, 26%) 1fr auto; gap: 10px; align-items: center; padding: 3px 4px; font-size: 13.5px; }
+.wf-apl-bar { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.wf-apl-bar span { display: block; height: 100%; background: var(--accent-2); border-radius: 4px; }
+.wf-apl strong { font-variant-numeric: tabular-nums; min-width: 72px; text-align: right; }
+@media (max-width: 520px) { .wf-row, .wf-apl { grid-template-columns: 96px 1fr auto; gap: 8px; } .wf-v, .wf-apl strong { min-width: 60px; font-size: 13px; } }
+/* Gráficos · lupa */
+.lupa { display: flex; align-items: center; gap: 12px; background: var(--accent-soft); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px; }
+.lupa-ic { font-size: 22px; }
+.hb-row.static { cursor: default; }

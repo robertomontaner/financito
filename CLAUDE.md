@@ -71,22 +71,15 @@ Las líneas son aproximadas. Busca por el nombre de la función.
   - **Invertido:** las cuentas con grupo «Inversiones» (`Libro.isInv`; se marcan en Ajustes → cuenta → Tipo «Inversión») cuentan como inversión. `Libro.invertido(from, to)` suma el dinero nuevo traspasado a ellas, sin revalorizaciones. Sale en Inicio, PyG, Gráficos y el reporte. Lo que se mete a invertir es un traspaso, nunca un gasto.
   - `infCuadre`: «Cierre de saldos». Por defecto a hoy, contra todo lo apuntado (decisión del usuario: es un «refresco» de descuadres, no un cierre de fin de mes). Se puede poner otra fecha («saldos a fecha de», `S.cuadreFecha`) y es parcial: solo se revisan las cuentas que se rellenan (`S.cuadreVals` guarda lo escrito al cambiar la fecha). El usuario mete el saldo real de cada banco, ve antes de guardar a qué cuenta irá cada diferencia (659/759, o 663/763 en inversiones) y se crea el asiento de corrección. Debajo, «Cierres hechos» (`cierresHechos`, `cierreHtml`): por fecha, Financito vs banco, diferencia y a dónde fue (enlace al movimiento).
   - `infReporte`: reporte ejecutivo de 2 páginas A4, impreso con `window.print()` y estilos `@media print`.
-- **Gráficos** (`viewGraficos`):
-  - Filtros:
-    - rangos en `RANGOS`, con desplazamiento ‹ ›;
-    - categoría y banco;
-    - «Con imprevistos», **desactivado por defecto**.
-  - Indicadores comparados con el periodo anterior.
-  - Contenido:
-    - barras de ingresos y gastos;
-    - «En qué se va» con barras HTML que filtran al tocar;
-    - tipo de gasto apilado;
-    - ahorro acumulado, con «Repartido por días» activado por defecto (`g.rep`): ingresos y fijos se prorratean entre los días de su mes para que no salte el día de cobro;
-    - desde dónde pagas;
-    - día de la semana;
-    - mayores gastos;
-    - imprevistos;
-    - patrimonio.
+- **Gráficos** (`viewGraficos`), en dos modos (decisión del usuario: que todo sume y sea conexo):
+  - Barra común: rangos en `RANGOS` con ‹ ›, «🔍 Categoría», «🔍 Banco» y «Con imprevistos» (**desactivado por defecto**; solo afecta a la composición del gasto, no al ahorro).
+  - **Panorama** (sin filtros), una sola historia que cuadra:
+    - indicadores: ingresos, gastos (todos, diciendo cuánto son imprevistos), ahorro = ingresos − gastos y «de ello, invertido». Se comparan con la media de los 12 meses anteriores escalada al periodo (`gRefs`, `cmp`).
+    - «Cómo se reparte lo que entra»: cascada en HTML (`.wf-*`): ingresos − cada bloque (`BLQ_DEF`) = ahorro, y debajo a dónde fue ese ahorro con `Libro.aplicacion` (`APL_DEF`), que suma lo mismo. Tocar un tramo de gasto filtra «En qué se va» por ese bloque (`g.blq`).
+    - «Entra y sale» (barras: ingresos frente a gastos apilados por bloque con los mismos colores), «En qué se va», «De dónde entra», ahorro acumulado («Repartido por días» por defecto, `g.rep`), «Desde dónde pagas», imprevistos y patrimonio.
+    - Tocar una categoría o un banco entra en lupa.
+  - **Lupa** (`g.cat` y/o `g.banco`): franja «Viendo solo…» con «✕ Quitar lupa»; indicadores (gastado, frente a la media de 12 meses, hace un año, límite del mes o saldo del banco); barras de los últimos 12 meses con media y límite; «Dónde se va» agrupado por concepto (`conceptoKey`); desde qué banco se paga (o en qué categorías, si es lupa de banco); lista de movimientos.
+  - Cubetas (`gBuckets`): por día hasta 14 días, por semana hasta 130, luego por mes.
   - Paleta categórica fija en `VIZ`, validada para daltonismo. Chart.js 4.4.1 se carga desde cdnjs.
 - **Cambio de banco** (`cambioBanco`): asistente que hace el traspaso del saldo y mueve a la cuenta nueva:
   - recurrentes y préstamos;
@@ -205,7 +198,7 @@ Hacer push a `main` en `robertomontaner/financito`; GitHub Pages despliega en un
 
 La lista viva para el usuario está en su página de Notion «Financito» (sección «Pendientes» y «Changelog»).
 
-1. **Gráficos / estadísticas:** el usuario quiere darle una vuelta completa más adelante.
+1. **Gráficos / estadísticas:** primera versión de Panorama + Lupa publicada el 4/11/2026; seguir afinando con lo que diga el usuario al usarla.
 2. **Inversiones:** dar de alta sus fondos en la sección Inversiones, y el bitcoin (~700 € invertidos, falta la fecha).
 3. **Mediolanum ya está cerrada:** se hizo «Cambiar de banco» a Ibercaja (5727, ahora cuenta principal). En `Config` había `cuenta_principal` repetida; desde ahora manda la primera fila y `setConfig` actualiza todas.
 4. Panel de «salud financiera» en Inicio (tasa de ahorro, meses de colchón, gasto corriente frente al año anterior, patrimonio), ofrecido y sin decidir.

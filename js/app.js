@@ -1256,7 +1256,7 @@ const RANGOS = [
   ['7d', '7 días'], ['semana', 'Esta semana'], ['mes', 'Este mes'], ['mespasado', 'Mes pasado'], ['30d', '30 días'],
   ['trim', 'Trimestre'], ['3m', '3 meses'], ['ano', 'Este año'], ['12m', '12 meses'], ['todo', 'Todo'], ['custom', 'Elegir fechas'],
 ];
-S.g ??= { r: 'mes', off: 0, from: '', to: '', cat: '', banco: '', imp: false, rep: true };
+S.g ??= { r: 'mes', off: 0, from: '', to: '', cat: '', banco: '', blq: '', imp: false, rep: true };
 
 // rango [from, to] del preset con desplazamiento (‹ ›)
 function gRange() {
@@ -1314,7 +1314,7 @@ const groupSum = (a, key) => { const o = {}; a.forEach((x) => { o[x[key]] = (o[x
 // cubetas de tiempo según la longitud del rango
 function gBuckets(from, to) {
   const n = daysBetween(from, to); const out = [];
-  if (n <= 35) { for (let d = from; d <= to; d = addDays(d, 1)) out.push({ k: d, a: d, b: d, l: String(Number(d.slice(8))) }); return { unit: 'día', out }; }
+  if (n <= 14) { for (let d = from; d <= to; d = addDays(d, 1)) out.push({ k: d, a: d, b: d, l: String(Number(d.slice(8))) }); return { unit: 'día', out }; }
   if (n <= 130) {
     for (let a = mondayOf(from); a <= to; a = addDays(a, 7)) { const b = addDays(a, 6); out.push({ k: a, a: a < from ? from : a, b: b > to ? to : b, l: dOf(a).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) }); }
     return { unit: 'semana', out };
@@ -1341,116 +1341,218 @@ function hbars(entries, total, prevMap, attr) {
   }).join('')}</div>`;
 }
 
+// Gráficos en dos modos:
+//  · Panorama (sin filtros): una sola historia que cuadra. Ingresos − gastos por bloque = ahorro, y a dónde ha ido ese ahorro.
+//  · Lupa (filtrando categoría o banco): solo lo que tiene sentido para ese filtro, comparado con tu media y con el año pasado.
+const BLQ_DEF = [['fijos', 'Fijos', 0], ['variables', 'Variables', 2], ['imprevistos', 'Imprevistos', 1], ['financieros', 'Hipoteca y otros', 6]];
+const APL_DEF = [['inversion', 'Invertido'], ['fondo', 'Fondo de imprevistos'], ['bancos', 'Se quedó en tus bancos'], ['bienes', 'Bienes'], ['deudas', 'Deuda pagada'], ['otros', 'Sin banco (histórico)']];
+const conceptoKey = (s) => norm(s).replace(/[^a-z ]+/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !['compra', 'tarj', 'tarjeta', 'pago', 'con', 'del', 'las', 'los'].includes(w)).slice(0, 3).join(' ') || norm(s).trim();
+// valor de referencia: media diaria de los 12 meses anteriores × días del periodo, y el mismo periodo del año pasado
+function gRefs(from, to, fn) {
+  const L = S.libro; const n = daysBetween(from, to); const first = L.activeRows.reduce((m, r) => (r.fecha < m ? r.fecha : m), from);
+  const yFrom = addDays(from, -365); const yTo = addDays(from, -1);
+  const media = first <= yFrom ? (fn(yFrom, yTo) / 365) * n : null;
+  const lyFrom = `${Number(from.slice(0, 4)) - 1}${from.slice(4)}`; const lyTo = `${Number(to.slice(0, 4)) - 1}${to.slice(4)}`;
+  const ly = first <= lyFrom ? fn(lyFrom, lyTo) : null;
+  return { media, ly };
+}
+const cmp = (cur, ref, label, goodUp) => {
+  if (ref === null || ref === undefined || Math.abs(ref) < 0.5) return '';
+  const p = ((cur - ref) / Math.abs(ref)) * 100;
+  if (Math.abs(p) < 1) return `<div class="small muted">≈ ${label}</div>`;
+  const good = goodUp ? p > 0 : p < 0;
+  return `<div class="small"><span class="${good ? 'pos' : 'neg'}">${p > 0 ? '▲' : '▼'} ${fmt(Math.abs(p), 0)} %</span> <span class="muted">vs ${label} (${eur(ref, 0)})</span></div>`;
+};
+
 async function viewGraficos() {
   const L = S.libro; const g = S.g;
-  const [from, to] = gRange(); const n = daysBetween(from, to);
-  const pFrom = addDays(from, -n); const pTo = addDays(from, -1);
-  const cur = gMovs(from, to); const prev = gMovs(pFrom, pTo);
-  const impAll = cur.gastos.filter((x) => x.imp);
-  if (!g.imp) { cur.gastos = cur.gastos.filter((x) => !x.imp); prev.gastos = prev.gastos.filter((x) => !x.imp); }
-  const G = sumV(cur.gastos); const I = sumV(cur.ingresos); const A = round2(I - G);
-  const Gp = sumV(prev.gastos); const Ip = sumV(prev.ingresos);
-  const hoy = todayISO(); const diasTrans = Math.max(1, daysBetween(from, to < hoy ? to : hoy));
-  const porCat = Object.entries(groupSum(cur.gastos, 'code')).filter(([, v]) => v > 0.004).sort((a, b) => b[1] - a[1]);
-  const porBanco = Object.entries(groupSum(cur.gastos, 'banco')).filter(([, v]) => v > 0.004).sort((a, b) => b[1] - a[1]);
-  const imps = impAll.sort((a, b) => b.r.fecha.localeCompare(a.r.fecha));
-  const top = [...cur.gastos].sort((a, b) => b.v - a.v).slice(0, 8);
-  const filtros = [g.cat && `Categoría: ${L.nombre(g.cat)}`, g.banco && `Pagado con: ${L.nombre(g.banco)}`, g.imp && 'Con imprevistos'].filter(Boolean);
+  const [from, to] = gRange(); const n = daysBetween(from, to); const hoy = todayISO();
+  const lupa = !!(g.cat || g.banco);
   const steppable = !['todo', 'custom'].includes(g.r);
-  const rangoBtns = RANGOS.map(([k, l]) => `<button class="gchip ${g.r === k ? 'on' : ''}" data-r="${k}">${l}</button>`).join('');
   const pickBtn = (key, label, val) => `<button class="gchip sel ${val ? 'on' : ''}" data-pick="${key}">${esc(val ? L.nombre(val) : label)} ▾</button>`;
-
-  view().innerHTML = `<div class="gtoolbar">
-      <div class="gchips">${rangoBtns}</div>
+  const toolbar = `<div class="gtoolbar">
+      <div class="gchips">${RANGOS.map(([k, l]) => `<button class="gchip ${g.r === k ? 'on' : ''}" data-r="${k}">${l}</button>`).join('')}</div>
       <div class="row between gnav">
         ${steppable ? '<button class="iconbtn" data-off="-1" aria-label="Periodo anterior">‹</button>' : '<span></span>'}
-        <div class="gtitle"><strong>${esc(gLabel(from, to))}</strong><small class="muted">${n} días · comparado con los ${n} anteriores</small></div>
+        <div class="gtitle"><strong>${esc(gLabel(from, to))}</strong><small class="muted">${n} días</small></div>
         ${steppable ? `<button class="iconbtn" data-off="1" aria-label="Periodo siguiente" ${g.off >= 0 ? 'disabled' : ''}>›</button>` : '<span></span>'}
       </div>
       ${g.r === 'custom' ? `<div class="two"><div class="field"><label class="lbl">Desde</label><input type="date" id="gf" value="${esc(from)}"></div><div class="field"><label class="lbl">Hasta</label><input type="date" id="gt" value="${esc(to)}"></div></div>` : ''}
-      <div class="gchips">${pickBtn('cat', 'Todas las categorías', g.cat)}${pickBtn('banco', 'Todos los bancos', g.banco)}
-        <button class="gchip sel ${g.imp ? 'on' : ''}" data-imp aria-pressed="${g.imp}">${g.imp ? '✓ ' : ''}Con imprevistos</button>
-        ${filtros.length ? '<button class="gchip clear" data-clear>✕ Quitar filtros</button>' : ''}</div>
-    </div>
-
-    <div class="kpis g4">
-      <div class="kpi"><div class="lbl">Gastos</div><div class="val">${eur(G, 0)}</div><div class="sub">${delta(G, Gp, false)}</div></div>
-      <div class="kpi"><div class="lbl">Ingresos</div><div class="val">${eur(I, 0)}</div><div class="sub">${delta(I, Ip, true)}</div></div>
-      <div class="kpi"><div class="lbl">Ahorro</div><div class="val ${A < 0 ? 'neg' : ''}">${eur(A, 0)}</div><div class="sub">${I > 0 ? `${fmt((A / I) * 100, 0)} % de lo que entra` : '—'}</div></div>
-      <div class="kpi"><div class="lbl">Gasto por día</div><div class="val">${eur(G / diasTrans, 0)}</div><div class="sub">${to > hoy ? `${diasTrans} días transcurridos` : `en ${n} días`}</div></div>
-    </div>
-
-    <div class="ggrid">
-      <div class="card span2"><div class="row between"><h3>Entra y sale</h3><span class="small muted">por ${'<span id="gunit"></span>'}</span></div><div class="chartbox"><canvas id="g1"></canvas></div></div>
-      <div class="card"><h3>En qué se va</h3>${porCat.length ? hbars(porCat, G, groupSum(prev.gastos, 'code'), 'data-cat') : '<div class="empty">Sin gastos en este periodo.</div>'}<p class="small muted" style="margin-bottom:0">Toca una categoría para filtrar todo por ella. ▲▼ = vs periodo anterior.</p></div>
-      <div class="card"><h3>Tipo de gasto</h3><div class="chartbox"><canvas id="g2"></canvas></div></div>
-      <div class="card"><div class="row between"><h3>Ahorro acumulado</h3><button class="gchip sel ${g.rep !== false ? 'on' : ''}" data-rep aria-pressed="${g.rep !== false}" title="Reparte por días los ingresos y los gastos fijos de cada mes">${g.rep !== false ? '✓ ' : ''}Repartido por días</button></div><div class="chartbox sm"><canvas id="g3"></canvas></div><p class="small muted" style="margin-bottom:0">${g.rep !== false ? 'Ingresos y fijos repartidos por igual entre los días del mes; el resto, el día que pasó. Así se ve el ritmo, sin el salto del día de cobro.' : 'Cada movimiento el día que pasó: sube de golpe el día que cobras.'}</p></div>
-      <div class="card"><div class="row between"><h3>Invertido</h3><strong>${eur(L.invertido(from, to), 0)}</strong></div><div class="chartbox sm"><canvas id="g6"></canvas></div><p class="small muted" style="margin-bottom:0">Dinero nuevo metido en tus cuentas de inversión (sin contar revalorizaciones)${I > 0 ? ` · ${fmt((L.invertido(from, to) / I) * 100, 0)} % de lo que entra` : ''}.</p></div>
-      <div class="card"><h3>Desde dónde pagas</h3>${porBanco.length ? hbars(porBanco, G, groupSum(prev.gastos, 'banco'), 'data-banco') : '<div class="empty">—</div>'}</div>
-      <div class="card"><h3>Qué día gastas más</h3><div class="chartbox sm"><canvas id="g4"></canvas></div><p class="small muted" style="margin-bottom:0">Media por día de la semana.</p></div>
-      <div class="card"><h3>Gastos más grandes</h3><ul class="list">${top.map((x) => `<li class="tap" data-id="${esc(x.r.id)}"><span class="pk-ic">${emojiFor(L.byCode[x.code])}</span><div class="grow"><div class="t">${esc(x.r.concepto || L.nombre(x.code))}${x.imp ? ' <span class="chip imprevisto">imprevisto</span>' : ''}</div><div class="s">${esc(shortDate(x.r.fecha))} · ${esc(L.nombre(x.code))}</div></div><div class="amount">${eur(x.v)}</div></li>`).join('') || '<li class="muted">—</li>'}</ul></div>
-      <div class="card"><div class="row between"><h3>Imprevistos</h3><strong>${eur(sumV(imps))}</strong></div>
-        <p class="small muted" style="margin-top:0">${g.imp ? '' : 'No cuentan en el resto de la página (activa «Con imprevistos» para sumarlos)'}${g.imp && G ? `${fmt((sumV(imps) / G) * 100, 0)} % del gasto del periodo` : ''}${L.fondo && L.inicio ? ` · en ${esc(L.nombre(L.fondo))}: ${eur(L.balanceToDate(L.fondo), 0)}` : ''}</p>
-        <ul class="list">${imps.slice(0, 8).map((x) => `<li class="tap" data-id="${esc(x.r.id)}"><span class="pk-ic">${emojiFor(L.byCode[x.code])}</span><div class="grow"><div class="t">${esc(x.r.concepto || '')}</div><div class="s">${esc(shortDate(x.r.fecha))} · ${esc(L.nombre(x.code))}</div></div><div class="amount">${eur(x.v)}</div></li>`).join('') || `<li class="muted">Ninguno en este periodo 🎉</li>`}</ul></div>
-      ${L.inicio && n > 45 ? '<div class="card span2"><h3>Patrimonio neto</h3><div class="chartbox sm"><canvas id="g5"></canvas></div></div>' : ''}
+      <div class="gchips">${pickBtn('cat', '🔍 Categoría', g.cat)}${pickBtn('banco', '🔍 Banco', g.banco)}
+        <button class="gchip sel ${g.imp ? 'on' : ''}" data-imp aria-pressed="${g.imp}">${g.imp ? '✓ ' : ''}Con imprevistos</button></div>
     </div>`;
 
-  // eventos
-  $$('[data-r]', view()).forEach((b) => { b.onclick = () => { g.r = b.dataset.r; g.off = 0; if (g.r === 'custom' && !g.from) { g.from = from; g.to = to; } viewGraficos(); }; });
-  $$('[data-off]', view()).forEach((b) => { b.onclick = () => { g.off += Number(b.dataset.off); viewGraficos(); }; });
-  $('#gf')?.addEventListener('change', (e) => { g.from = e.target.value; viewGraficos(); });
-  $('#gt')?.addEventListener('change', (e) => { g.to = e.target.value; viewGraficos(); });
-  $('[data-imp]').onclick = () => { g.imp = !g.imp; viewGraficos(); };
-  $('[data-rep]').onclick = () => { g.rep = g.rep === false; viewGraficos(); };
-  $('[data-clear]')?.addEventListener('click', () => { g.cat = ''; g.banco = ''; g.imp = false; viewGraficos(); });
-  $$('[data-pick]', view()).forEach((b) => {
-    b.onclick = () => {
-      const key = b.dataset.pick;
-      if (g[key]) { g[key] = ''; viewGraficos(); return; }
-      openPicker({ title: key === 'cat' ? 'Filtrar por categoría' : 'Filtrar por banco', selected: g[key], filter: (c) => (key === 'cat' ? kindOf(c) === 'gasto' : ['dinero', 'deuda'].includes(kindOf(c))), onPick: (code) => { g[key] = code; viewGraficos(); } });
-    };
-  });
-  $$('[data-cat]', view()).forEach((b) => { b.onclick = () => { g.cat = g.cat === b.dataset.cat ? '' : b.dataset.cat; viewGraficos(); scrollTo(0, 0); }; });
-  $$('[data-banco]', view()).forEach((b) => { b.onclick = () => { g.banco = g.banco === b.dataset.banco ? '' : b.dataset.banco; viewGraficos(); scrollTo(0, 0); }; });
-  $$('li[data-id]', view()).forEach((li) => { li.onclick = () => editEntry(li.dataset.id); });
-
-  // gráficos
-  const { unit, out: B } = gBuckets(from, to); $('#gunit').textContent = unit;
-  let Chart; try { Chart = await chartReady(); } catch { view().insertAdjacentHTML('afterbegin', '<div class="banner warn">No se pudo cargar la librería de gráficos (¿sin conexión?). Las listas sí funcionan.</div>'); return; }
-  const v = vizMode(); const S1 = v.s;
-  const money = { callbacks: { label: (c) => `${c.dataset.label ? `${c.dataset.label}: ` : ''}${eur(c.parsed.y ?? c.parsed)}` } };
-  const yAxis = { ticks: { callback: (x) => `${fmt(x, 0)} €`, maxTicksLimit: 5 }, grid: { color: v.grid }, border: { display: false } };
-  const xAxis = { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } };
-  const bar = (label, data, color, extra = {}) => ({ label, data, backgroundColor: color, borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: 'start', maxBarThickness: 28, ...extra });
-  const legend = { position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, useBorderRadius: true, borderRadius: 2 } };
-  const labels = B.map((b) => b.l);
-  const gB = B.map((b) => round2(cur.gastos.filter((x) => inB(b, x.r.fecha)).reduce((s, x) => s + x.v, 0)));
-  const iB = B.map((b) => round2(cur.ingresos.filter((x) => inB(b, x.r.fecha)).reduce((s, x) => s + x.v, 0)));
-  const hover = { mode: 'index', intersect: false };
-  S.charts.push(new Chart($('#g1'), { type: 'bar', data: { labels, datasets: [bar('Ingresos', iB, S1[0]), bar('Gastos', gB, S1[1])] }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend, tooltip: money }, scales: { x: xAxis, y: yAxis }, datasets: { bar: { categoryPercentage: 0.7, barPercentage: 0.9 } } } }));
-  // tipo de gasto apilado (orden fijo de bloques = color fijo)
-  const BLQ = [['fijos', 'Fijos', S1[0]], ['variables', 'Variables', S1[2]], ['imprevistos', 'Imprevistos', S1[1]], ['financieros', 'Hipoteca y otros', S1[6]]];
-  const blqData = BLQ.map(([k, l, c]) => bar(l, B.map((b) => round2(cur.gastos.filter((x) => x.bloque === k && inB(b, x.r.fecha)).reduce((s, x) => s + x.v, 0))), c, { borderColor: v.surface, borderWidth: { top: 2 }, borderRadius: 0 })).filter((d) => d.data.some((x) => x));
-  S.charts.push(new Chart($('#g2'), { type: 'bar', data: { labels, datasets: blqData }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend, tooltip: money }, scales: { x: { ...xAxis, stacked: true }, y: { ...yAxis, stacked: true } } } }));
-  // ahorro por tramo: con «repartido», ingresos y fijos se prorratean entre los días de su mes (dentro del rango), para que no salte el día de cobro
-  const mensual = (x, ing) => ing || x.bloque === 'fijos' || x.bloque === 'financieros';
-  const tramo = (b, x, ing) => {
-    if (g.rep === false || !mensual(x, ing)) return inB(b, x.r.fecha) ? x.v : 0;
-    const m = ym(x.r.fecha); const a = `${m}-01` < from ? from : `${m}-01`; const z = endOfMonth(m) > to ? to : endOfMonth(m);
-    const ia = b.a > a ? b.a : a; const iz = b.b < z ? b.b : z;
-    return iz < ia ? 0 : (x.v * daysBetween(ia, iz)) / daysBetween(a, z);
+  const bind = () => {
+    $$('[data-r]', view()).forEach((b) => { b.onclick = () => { g.r = b.dataset.r; g.off = 0; if (g.r === 'custom' && !g.from) { g.from = from; g.to = to; } viewGraficos(); }; });
+    $$('[data-off]', view()).forEach((b) => { b.onclick = () => { g.off += Number(b.dataset.off); viewGraficos(); }; });
+    $('#gf')?.addEventListener('change', (e) => { g.from = e.target.value; viewGraficos(); });
+    $('#gt')?.addEventListener('change', (e) => { g.to = e.target.value; viewGraficos(); });
+    $('[data-imp]').onclick = () => { g.imp = !g.imp; viewGraficos(); };
+    $$('[data-clear]', view()).forEach((b) => { b.onclick = () => { g.cat = ''; g.banco = ''; g.blq = ''; viewGraficos(); scrollTo(0, 0); }; });
+    $$('[data-pick]', view()).forEach((b) => {
+      b.onclick = () => {
+        const key = b.dataset.pick;
+        if (g[key]) { g[key] = ''; viewGraficos(); return; }
+        openPicker({ title: key === 'cat' ? 'Ver con lupa una categoría' : 'Ver con lupa un banco', selected: g[key], filter: (c) => (key === 'cat' ? isGasto(c) : ['dinero', 'deuda'].includes(kindOf(c))), onPick: (code) => { g[key] = code; viewGraficos(); scrollTo(0, 0); } });
+      };
+    });
+    $$('[data-cat]', view()).forEach((b) => { b.onclick = () => { g.cat = b.dataset.cat; viewGraficos(); scrollTo(0, 0); }; });
+    $$('[data-banco]', view()).forEach((b) => { b.onclick = () => { g.banco = b.dataset.banco; viewGraficos(); scrollTo(0, 0); }; });
+    $$('[data-blq]', view()).forEach((b) => { b.onclick = () => { g.blq = g.blq === b.dataset.blq ? '' : b.dataset.blq; viewGraficos(); $('#gwhere')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }; });
+    $$('li[data-id]', view()).forEach((li) => { li.onclick = () => editEntry(li.dataset.id); });
+    $('[data-rep]')?.addEventListener('click', () => { g.rep = g.rep === false; viewGraficos(); });
   };
-  let acc = 0; const accData = B.map((b) => (b.a > hoy ? null : (acc = round2(acc + cur.ingresos.reduce((s2, x) => s2 + tramo(b, x, true), 0) - cur.gastos.reduce((s2, x) => s2 + tramo(b, x, false), 0)))));
-  S.charts.push(new Chart($('#g3'), { type: 'line', data: { labels, datasets: [{ label: 'Ahorro acumulado', data: accData, borderColor: S1[2], backgroundColor: 'transparent', borderWidth: 2, tension: 0.25, pointRadius: B.length > 20 ? 0 : 4, pointHoverRadius: 5, pointBackgroundColor: S1[2], pointBorderColor: v.surface, pointBorderWidth: 2 }] }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend: { display: false }, tooltip: money }, scales: { x: xAxis, y: yAxis } } }));
-  S.charts.push(new Chart($('#g6'), { type: 'bar', data: { labels, datasets: [bar('Invertido', B.map((b) => (b.a > hoy ? null : L.invertido(b.a, b.b))), S1[2])] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: money }, scales: { x: xAxis, y: yAxis } } }));
-  const DOW = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']; const cnt = Array(7).fill(0); const tot = Array(7).fill(0);
-  for (let d = from; d <= to; d = addDays(d, 1)) cnt[(dOf(d).getDay() + 6) % 7]++;
-  cur.gastos.filter((x) => x.bloque === 'variables' || x.bloque === 'imprevistos').forEach((x) => { tot[(dOf(x.r.fecha).getDay() + 6) % 7] += x.v; });
-  S.charts.push(new Chart($('#g4'), { type: 'bar', data: { labels: DOW, datasets: [bar('Media', tot.map((t, i) => (cnt[i] ? round2(t / cnt[i]) : 0)), S1[0])] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: money }, scales: { x: xAxis, y: yAxis } } }));
-  if ($('#g5')) {
-    const ms = monthsBetween(ym(from) < ym(L.inicio) ? ym(L.inicio) : ym(from), ym(to < hoy ? to : hoy));
-    S.charts.push(new Chart($('#g5'), { type: 'line', data: { labels: ms.map((m) => `${MESES[Number(m.slice(5)) - 1]} ${m.slice(2, 4)}`), datasets: [{ label: 'Patrimonio neto', data: ms.map((m) => L.balance(m).patrimonioNeto), borderColor: S1[0], borderWidth: 2, tension: 0.25, pointRadius: 3, pointBackgroundColor: S1[0], pointBorderColor: v.surface, pointBorderWidth: 2 }] }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend: { display: false }, tooltip: money }, scales: { x: xAxis, y: yAxis } } }));
+
+  // ---------- datos del periodo ----------
+  const cur = gMovs(from, to);
+  const gastosAll = cur.gastos; const impAll = gastosAll.filter((x) => x.imp);
+  const gastos = g.imp ? gastosAll : gastosAll.filter((x) => !x.imp);
+  const { unit, out: B } = gBuckets(from, to);
+
+  if (!lupa) {
+    // ===================== PANORAMA =====================
+    const I = sumV(cur.ingresos); const GT = sumV(gastosAll); const A = round2(I - GT);
+    const inv = L.invertido(from, to); const apl = L.aplicacion(from, to);
+    const blq = Object.fromEntries(BLQ_DEF.map(([k]) => [k, round2(gastosAll.filter((x) => x.bloque === k).reduce((s, x) => s + x.v, 0))]));
+    const refs = gRefs(from, to, (a, b) => { const m = gMovs(a, b); return { I: sumV(m.ingresos), G: sumV(m.gastos) }; });
+    const rI = (k) => (refs[k] ? refs[k].I : null); const rG = (k) => (refs[k] ? refs[k].G : null); const rA = (k) => (refs[k] ? refs[k].I - refs[k].G : null);
+    const v = vizMode(); const COL = Object.fromEntries(BLQ_DEF.map(([k, , ci]) => [k, v.s[ci]]));
+    // cascada: barras flotantes sobre una misma escala
+    const lo = Math.min(0, A); const hi = Math.max(I, GT, 1); const span = hi - lo; const pos = (x) => ((x - lo) / span) * 100;
+    let run = I;
+    const wfRow = (label, val, a, b, color, attr = '', sub = '', strong = false) => `<button class="wf-row ${strong ? 'strong' : ''} ${attr ? '' : 'static'}" ${attr}><span class="wf-l">${label}${sub ? `<small>${sub}</small>` : ''}</span><span class="wf-track"><span class="wf-bar" style="left:${pos(Math.min(a, b))}%;width:${Math.max(0.8, Math.abs(pos(b) - pos(a)))}%;background:${color}"></span></span><span class="wf-v">${val}</span></button>`;
+    let wf = wfRow('Ingresos', eur(I, 0), 0, I, v.s[5], 'data-goto="ging"', '', true);
+    for (const [k, l] of BLQ_DEF) {
+      if (Math.abs(blq[k]) < 0.5) continue;
+      wf += wfRow(`− ${l}`, eur(blq[k], 0), run, run - blq[k], COL[k], `data-blq="${k}"`, g.blq === k ? 'viendo' : `${I > 0 ? fmt((blq[k] / I) * 100, 0) : '–'} %`);
+      run -= blq[k];
+    }
+    wf += wfRow(`= ${A >= 0 ? 'Ahorro' : 'Te has comido ahorro'}`, eur(A, 0), 0, A, A >= 0 ? v.s[2] : 'var(--neg)', '', I > 0 ? `${fmt((A / I) * 100, 0)} % de lo que entra` : '', true);
+    const aplRows = APL_DEF.filter(([k]) => Math.abs(apl[k]) >= 0.5);
+    const aplHtml = aplRows.length ? `<div class="wf-split"><div class="small muted" style="margin-bottom:4px">${A >= 0 ? 'Y ese ahorro está en:' : 'Y ha salido de:'}</div>${aplRows.map(([k, l]) => `<div class="wf-apl"><span>${esc(l)}</span><span class="wf-apl-bar"><span style="width:${Math.min(100, (Math.abs(apl[k]) / Math.max(...aplRows.map(([kk]) => Math.abs(apl[kk])))) * 100)}%"></span></span><strong class="${apl[k] < 0 ? 'neg' : ''}">${eur(apl[k], 0)}</strong></div>`).join('')}<div class="small muted" style="margin-top:4px">Suma ${eur(apl.total, 0)} = el ahorro de arriba.</div></div>` : '';
+
+    const gWhere = g.blq ? gastos.filter((x) => x.bloque === g.blq) : gastos;
+    const porCat = Object.entries(groupSum(gWhere, 'code')).filter(([, x]) => x > 0.004).sort((a, b) => b[1] - a[1]);
+    const GW = sumV(gWhere);
+    const porIng = Object.entries(groupSum(cur.ingresos, 'code')).filter(([, x]) => x > 0.004).sort((a, b) => b[1] - a[1]);
+    const porBanco = Object.entries(groupSum(gastos, 'banco')).filter(([c, x]) => c && x > 0.004).sort((a, b) => b[1] - a[1]);
+    const blqName = Object.fromEntries(BLQ_DEF.map(([k, l]) => [k, l]));
+
+    view().innerHTML = `${toolbar}
+      <div class="kpis g4">
+        <div class="kpi"><div class="lbl">Ingresos</div><div class="val">${eur(I, 0)}</div>${cmp(I, rI('media'), 'tu media', true) || cmp(I, rI('ly'), 'hace un año', true)}</div>
+        <div class="kpi"><div class="lbl">Gastos</div><div class="val">${eur(GT, 0)}</div>${impAll.length ? `<div class="small muted">${eur(sumV(impAll), 0)} son imprevistos</div>` : ''}${cmp(GT, rG('media'), 'tu media', false)}</div>
+        <div class="kpi"><div class="lbl">Ahorro</div><div class="val ${A < 0 ? 'neg' : 'pos'}">${eur(A, 0)}</div><div class="small muted">${I > 0 ? `${fmt((A / I) * 100, 0)} % de lo que entra` : 'ingresos − gastos'}</div>${cmp(A, rA('media'), 'tu media', true)}</div>
+        <div class="kpi"><div class="lbl">De ello, invertido</div><div class="val">${eur(inv, 0)}</div><div class="small muted">${A > 0 ? `${fmt((inv / A) * 100, 0)} % de tu ahorro` : 'dinero nuevo a inversión'}</div></div>
+      </div>
+      <div class="ggrid">
+        <div class="card span2"><div class="row between"><h3>Cómo se reparte lo que entra</h3><span class="small muted">toca un tramo para ver su detalle</span></div>
+          <div class="wf">${wf}</div>${aplHtml}</div>
+        <div class="card span2"><div class="row between"><h3>Entra y sale</h3><span class="small muted">por ${unit}</span></div><div class="chartbox"><canvas id="g1"></canvas></div>
+          <p class="small muted" style="margin-bottom:0">Los gastos van apilados con los mismos colores de arriba.</p></div>
+        <div class="card" id="gwhere"><div class="row between"><h3>En qué se va${g.blq ? ` · ${esc(blqName[g.blq])}` : ''}</h3>${g.blq ? '<button class="gchip sm on" data-blq="' + esc(g.blq) + '">✕ todos</button>' : ''}</div>
+          ${porCat.length ? hbars(porCat, GW, null, 'data-cat') : '<div class="empty">Sin gastos en este periodo.</div>'}
+          <p class="small muted" style="margin-bottom:0">Suma ${eur(GW, 0)}${g.imp || g.blq === 'imprevistos' ? '' : ' (sin imprevistos)'}. Toca una categoría para verla con lupa.</p></div>
+        <div class="card" id="ging"><h3>De dónde entra</h3>${porIng.length ? hbars(porIng, I, null, 'data-noop') : '<div class="empty">Sin ingresos en este periodo.</div>'}
+          <p class="small muted" style="margin-bottom:0">Suma ${eur(I, 0)}.</p></div>
+        <div class="card"><div class="row between"><h3>Ahorro acumulado</h3><button class="gchip sel sm ${g.rep !== false ? 'on' : ''}" data-rep>${g.rep !== false ? '✓ ' : ''}Repartido por días</button></div><div class="chartbox sm"><canvas id="g3"></canvas></div>
+          <p class="small muted" style="margin-bottom:0">${to < hoy ? `Termina en los ${eur(A, 0)} de ahorro del periodo (los de la cascada).` : `Va hasta hoy; al acabar el periodo llegará al ahorro de la cascada.`}</p></div>
+        <div class="card"><h3>Desde dónde pagas</h3>${porBanco.length ? hbars(porBanco, sumV(gastos), null, 'data-banco') : '<div class="empty">—</div>'}<p class="small muted" style="margin-bottom:0">Toca un banco para verlo con lupa.</p></div>
+        <div class="card"><div class="row between"><h3>Imprevistos</h3><strong>${eur(sumV(impAll), 0)}</strong></div>
+          <ul class="list">${[...impAll].sort((a, b) => b.r.fecha.localeCompare(a.r.fecha)).slice(0, 6).map((x) => `<li class="tap" data-id="${esc(x.r.id)}"><span class="pk-ic">${emojiFor(L.byCode[x.code])}</span><div class="grow"><div class="t">${esc(x.r.concepto || '')}</div><div class="s">${esc(shortDate(x.r.fecha))} · ${esc(L.nombre(x.code))}</div></div><div class="amount">${eur(x.v)}</div></li>`).join('') || '<li class="muted">Ninguno en este periodo 🎉</li>'}</ul></div>
+        ${L.inicio && n > 45 ? '<div class="card"><h3>Patrimonio neto</h3><div class="chartbox sm"><canvas id="g5"></canvas></div></div>' : ''}
+      </div>`;
+    bind();
+    $$('[data-goto]', view()).forEach((b) => { b.onclick = () => $(`#${b.dataset.goto}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+    $$('[data-noop]', view()).forEach((b) => { b.style.cursor = 'default'; });
+
+    let Chart; try { Chart = await chartReady(); } catch { view().insertAdjacentHTML('afterbegin', '<div class="banner warn">No se pudo cargar la librería de gráficos (¿sin conexión?). Las listas sí funcionan.</div>'); return; }
+    const money = { callbacks: { label: (c) => `${c.dataset.label ? `${c.dataset.label}: ` : ''}${eur(c.parsed.y ?? c.parsed)}` } };
+    const yAxis = { ticks: { callback: (x) => `${fmt(x, 0)} €`, maxTicksLimit: 5 }, grid: { color: v.grid }, border: { display: false } };
+    const xAxis = { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } };
+    const legend = { position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, useBorderRadius: true, borderRadius: 2 } };
+    const labels = B.map((b) => b.l); const hover = { mode: 'index', intersect: false };
+    const ds = [{ label: 'Ingresos', data: B.map((b) => round2(cur.ingresos.filter((x) => inB(b, x.r.fecha)).reduce((s, x) => s + x.v, 0))), backgroundColor: v.s[5], stack: 'i', borderRadius: 4, maxBarThickness: 26 }];
+    for (const [k, l] of BLQ_DEF) {
+      const data = B.map((b) => round2(gastosAll.filter((x) => x.bloque === k && inB(b, x.r.fecha)).reduce((s, x) => s + x.v, 0)));
+      if (data.some((x) => x)) ds.push({ label: l, data, backgroundColor: COL[k], stack: 'g', borderColor: v.surface, borderWidth: { top: 1 }, maxBarThickness: 26 });
+    }
+    S.charts.push(new Chart($('#g1'), { type: 'bar', data: { labels, datasets: ds }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend, tooltip: money }, scales: { x: { ...xAxis, stacked: true }, y: { ...yAxis, stacked: true } }, datasets: { bar: { categoryPercentage: 0.7, barPercentage: 0.9 } } } }));
+    // ahorro acumulado (con prorrateo opcional de lo mensual) y, debajo, lo invertido acumulado
+    const mensual = (x, ing) => ing || x.bloque === 'fijos' || x.bloque === 'financieros';
+    const tramo = (b, x, ing) => {
+      if (g.rep === false || !mensual(x, ing)) return inB(b, x.r.fecha) ? x.v : 0;
+      const m = ym(x.r.fecha); const a = `${m}-01` < from ? from : `${m}-01`; const z = endOfMonth(m) > to ? to : endOfMonth(m);
+      const ia = b.a > a ? b.a : a; const iz = b.b < z ? b.b : z;
+      return iz < ia ? 0 : (x.v * daysBetween(ia, iz)) / daysBetween(a, z);
+    };
+    let acc = 0;
+    const accData = B.map((b) => (b.a > hoy ? null : (acc = round2(acc + cur.ingresos.reduce((s2, x) => s2 + tramo(b, x, true), 0) - gastosAll.reduce((s2, x) => s2 + tramo(b, x, false), 0)))));
+    S.charts.push(new Chart($('#g3'), { type: 'line', data: { labels, datasets: [
+      { label: 'Ahorro acumulado', data: accData, borderColor: v.s[2], backgroundColor: `${v.s[2]}22`, fill: 'origin', borderWidth: 2, tension: 0.25, pointRadius: B.length > 20 ? 0 : 3, pointHoverRadius: 4 },
+    ] }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend: { display: false }, tooltip: money }, scales: { x: xAxis, y: yAxis } } }));
+    if ($('#g5')) {
+      const ms = monthsBetween(ym(from) < ym(L.inicio) ? ym(L.inicio) : ym(from), ym(to < hoy ? to : hoy));
+      S.charts.push(new Chart($('#g5'), { type: 'line', data: { labels: ms.map((m) => `${MESES[Number(m.slice(5)) - 1]} ${m.slice(2, 4)}`), datasets: [{ label: 'Patrimonio neto', data: ms.map((m) => L.balance(m).patrimonioNeto), borderColor: v.s[0], borderWidth: 2, tension: 0.25, pointRadius: 3, pointBackgroundColor: v.s[0], pointBorderColor: v.surface, pointBorderWidth: 2 }] }, options: { maintainAspectRatio: false, interaction: hover, plugins: { legend: { display: false }, tooltip: money }, scales: { x: xAxis, y: yAxis } } }));
+    }
+    return;
   }
+
+  // ===================== LUPA =====================
+  const G = sumV(gastos);
+  const gastosTodo = (() => { const keep = { cat: g.cat, banco: g.banco }; g.cat = ''; g.banco = ''; const m = gMovs(from, to); Object.assign(g, keep); return g.imp ? m.gastos : m.gastos.filter((x) => !x.imp); })();
+  const share = sumV(gastosTodo) ? (G / sumV(gastosTodo)) * 100 : 0;
+  const refs = gRefs(from, to, (a, b) => { const m = gMovs(a, b); return sumV(g.imp ? m.gastos : m.gastos.filter((x) => !x.imp)); });
+  const titulo = [g.cat && L.nombre(g.cat), g.banco && `pagado con ${L.nombre(g.banco)}`].filter(Boolean).join(' · ');
+  const nMov = gastos.length; const ticket = nMov ? G / nMov : 0;
+  // límite (si el periodo es un mes y la categoría lo tiene)
+  const lim = g.cat && from.slice(8) === '01' && to === endOfMonth(ym(from)) ? L.presupuesto(ym(from)).find((p) => String(p.code ?? p.cuenta) === g.cat) : null;
+  const limV = lim ? num(lim.importe ?? lim.limite) : 0;
+  // conceptos (comercios) agrupados
+  const grupos = {};
+  for (const x of gastos) { const k = conceptoKey(x.r.concepto || L.nombre(x.code)); (grupos[k] ??= { n: 0, v: 0, names: {} }); grupos[k].n++; grupos[k].v += x.v; const nm = (x.r.concepto || L.nombre(x.code)).trim(); grupos[k].names[nm] = (grupos[k].names[nm] || 0) + 1; }
+  const topCon = Object.values(grupos).map((o) => ({ ...o, label: Object.entries(o.names).sort((a, b) => b[1] - a[1])[0][0] })).sort((a, b) => b.v - a.v).slice(0, 10);
+  const maxCon = Math.max(1, ...topCon.map((o) => o.v));
+  const otra = g.cat ? Object.entries(groupSum(gastos, 'banco')).filter(([c, x]) => c && x > 0.004).sort((a, b) => b[1] - a[1]) : Object.entries(groupSum(gastos, 'code')).filter(([, x]) => x > 0.004).sort((a, b) => b[1] - a[1]);
+  const saldo = g.banco && L.inicio ? L.balanceToDate(g.banco, to < hoy ? to : hoy) : null;
+  // evolución: 12 meses hasta el final del periodo, con el periodo marcado
+  const mEnd = ym(to < hoy ? to : hoy); const meses = monthsBetween(addMonths(mEnd, -11), mEnd);
+  const keep = { cat: g.cat, banco: g.banco };
+  const evo = meses.map((m) => { const mm = gMovs(`${m}-01`, endOfMonth(m)); Object.assign(g, keep); return round2(sumV(g.imp ? mm.gastos : mm.gastos.filter((x) => !x.imp))); });
+  const evoMedia = evo.filter((x, i) => i < evo.length - 1 && x).length ? evo.slice(0, -1).reduce((a, b) => a + b, 0) / Math.max(1, evo.slice(0, -1).filter((x) => x).length) : 0;
+
+  view().innerHTML = `${toolbar}
+    <div class="lupa"><span class="lupa-ic">🔍</span><div class="grow"><strong>Viendo solo: ${esc(titulo)}</strong><div class="small">${g.cat ? `${fmt(share, 0)} % de tu gasto del periodo` : `${nMov} gastos pagados desde aquí`}${g.imp ? '' : ' · sin imprevistos'}</div></div><button class="btn sm" data-clear>✕ Quitar lupa</button></div>
+    <div class="kpis g4">
+      <div class="kpi"><div class="lbl">${g.cat ? 'Gastado' : 'Gastos pagados'}</div><div class="val">${eur(G, 0)}</div><div class="small muted">${nMov} movimiento${nMov === 1 ? '' : 's'}${nMov ? ` · ${eur(ticket, 0)} de media` : ''}</div></div>
+      <div class="kpi"><div class="lbl">Frente a tu media</div><div class="val">${refs.media === null ? '—' : eur(refs.media, 0)}</div>${refs.media === null ? '<div class="small muted">aún no hay 12 meses de datos</div>' : cmp(G, refs.media, 'media 12 meses', false)}</div>
+      <div class="kpi"><div class="lbl">Hace un año</div><div class="val">${refs.ly === null ? '—' : eur(refs.ly, 0)}</div>${refs.ly === null ? '<div class="small muted">sin datos de entonces</div>' : cmp(G, refs.ly, 'el año pasado', false)}</div>
+      ${limV ? `<div class="kpi"><div class="lbl">Límite del mes</div><div class="val ${G > limV ? 'neg' : ''}">${eur(limV, 0)}</div><div class="small ${G > limV ? 'neg' : 'muted'}">${G > limV ? `te pasas ${eur(G - limV, 0)}` : `quedan ${eur(limV - G, 0)}`}</div></div>`
+      : saldo !== null ? `<div class="kpi"><div class="lbl">Saldo</div><div class="val">${eur(saldo, 0)}</div><div class="small muted">a ${esc(shortDate(to < hoy ? to : hoy))}</div></div>`
+      : `<div class="kpi"><div class="lbl">Por día</div><div class="val">${eur(G / Math.max(1, daysBetween(from, to < hoy ? to : hoy)), 1)}</div><div class="small muted">en el periodo</div></div>`}
+    </div>
+    <div class="ggrid">
+      <div class="card span2"><div class="row between"><h3>Últimos 12 meses</h3><span class="small muted">${evoMedia ? `media ${eur(evoMedia, 0)}/mes` : ''}</span></div><div class="chartbox sm"><canvas id="l1"></canvas></div></div>
+      <div class="card"><h3>${g.cat ? 'Dónde se va' : 'En qué se va'}</h3>
+        ${g.cat ? (topCon.length ? `<div class="hb">${topCon.map((o) => `<div class="hb-row static"><span class="hb-name">${esc(o.label.slice(0, 40))}<small class="muted"> ×${o.n}</small></span><span class="hb-track"><span class="hb-fill" style="width:${Math.max(1.5, (o.v / maxCon) * 100)}%"></span></span><span class="hb-val">${eur(o.v, 0)}<small>${G ? `${fmt((o.v / G) * 100, 0)} %` : ''}</small></span></div>`).join('')}</div>` : '<div class="empty">Nada en este periodo.</div>')
+        : (otra.length ? hbars(otra, G, null, 'data-cat') : '<div class="empty">Nada en este periodo.</div>')}
+        <p class="small muted" style="margin-bottom:0">Suma ${eur(G, 0)}.${g.cat ? ' Agrupado por concepto.' : ' Toca una categoría para afinar la lupa.'}</p></div>
+      <div class="card"><h3>${g.cat ? 'Desde dónde lo pagas' : 'Conceptos que más pesan'}</h3>
+        ${g.cat ? (otra.length ? hbars(otra, G, null, 'data-banco') : '<div class="empty">—</div>')
+        : (topCon.length ? `<div class="hb">${topCon.map((o) => `<div class="hb-row static"><span class="hb-name">${esc(o.label.slice(0, 40))}<small class="muted"> ×${o.n}</small></span><span class="hb-track"><span class="hb-fill" style="width:${Math.max(1.5, (o.v / maxCon) * 100)}%"></span></span><span class="hb-val">${eur(o.v, 0)}</span></div>`).join('')}</div>` : '<div class="empty">—</div>')}</div>
+      <div class="card span2"><h3>Movimientos del periodo</h3><ul class="list">${[...gastos].sort((a, b) => b.r.fecha.localeCompare(a.r.fecha)).slice(0, 40).map((x) => `<li class="tap" data-id="${esc(x.r.id)}"><span class="pk-ic">${emojiFor(L.byCode[x.code])}</span><div class="grow"><div class="t">${esc(x.r.concepto || L.nombre(x.code))}${x.imp ? ' <span class="chip imprevisto">imprevisto</span>' : ''}</div><div class="s">${esc(shortDate(x.r.fecha))} · ${esc(L.nombre(x.code))}${x.banco ? ` · ${esc(L.nombre(x.banco))}` : ''}</div></div><div class="amount ${x.v < 0 ? 'pos' : ''}">${eur(x.v)}</div></li>`).join('') || '<li class="muted">Nada en este periodo.</li>'}</ul>
+        ${gastos.length > 40 ? `<p class="small muted">Y ${gastos.length - 40} más.</p>` : ''}</div>
+    </div>`;
+  bind();
+  let Chart; try { Chart = await chartReady(); } catch { return; }
+  const v = vizMode();
+  const money = { callbacks: { label: (c) => `${c.dataset.label ? `${c.dataset.label}: ` : ''}${eur(c.parsed.y ?? c.parsed)}` } };
+  const enPeriodo = (m) => m >= ym(from) && m <= ym(to);
+  S.charts.push(new Chart($('#l1'), { type: 'bar', data: { labels: meses.map((m) => `${MESES[Number(m.slice(5)) - 1]}${m.slice(0, 4) !== mEnd.slice(0, 4) ? ` ${m.slice(2, 4)}` : ''}`), datasets: [
+    { label: 'Gastado', data: evo, backgroundColor: meses.map((m) => (enPeriodo(m) ? v.s[0] : `${v.s[0]}66`)), borderRadius: 4, maxBarThickness: 28 },
+    ...(evoMedia ? [{ type: 'line', label: 'Media', data: meses.map(() => round2(evoMedia)), borderColor: v.ink, borderDash: [4, 4], borderWidth: 1, pointRadius: 0 }] : []),
+    ...(limV ? [{ type: 'line', label: 'Límite', data: meses.map(() => limV), borderColor: v.s[1], borderDash: [2, 3], borderWidth: 1, pointRadius: 0 }] : []),
+  ] }, options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: money }, scales: { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true } }, y: { ticks: { callback: (x) => `${fmt(x, 0)} €`, maxTicksLimit: 5 }, grid: { color: v.grid }, border: { display: false } } } } }));
 }
 
 // ================= REPORTE EJECUTIVO MENSUAL (2 páginas A4) =================
