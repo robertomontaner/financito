@@ -1888,12 +1888,12 @@ function viewAjustes() {
   const pre = (L.db.Prestamos || []).filter((p) => p.nombre);
   const groups = {}; L.cuentas.forEach((c) => (groups[KIND_LABEL[kindOf(c)]] ??= []).push(c));
   const listOf = (kinds) => L.cuentas.filter((c) => kinds.includes(kindOf(c)) && !SYS.has(c.codigo)).sort((a, b) => kinds.indexOf(kindOf(a)) - kinds.indexOf(kindOf(b)));
-  const accLi = (c, saldo) => `<li class="tap" data-acc="${esc(c.codigo)}"><div class="grow"><div class="t">${esc(c.nombre)}${L.isInv(c.codigo) ? ' <span class="chip ok">inversión</span>' : ''}${c.activa === 0 || c.activa === '0' ? ' <span class="chip">oculta</span>' : ''}</div><div class="s">${esc(displayGroup(c))}</div></div>${saldo && L.inicio ? `<div class="amount">${eur(L.balanceToDate(c.codigo))}</div>` : ''}</li>`;
+  const accLi = (c, saldo) => `<li class="tap" data-acc="${esc(c.codigo)}"><div class="grow"><div class="t">${esc(c.nombre)}${L.isInv(c.codigo) ? ' <span class="chip ok">inversión</span>' : ''}${c.codigo === L.principal ? ' <span class="chip ok">★ principal</span>' : ''}${c.codigo === L.fondo ? ' <span class="chip">fondo imprevistos</span>' : ''}${c.activa === 0 || c.activa === '0' ? ' <span class="chip">oculta</span>' : ''}</div><div class="s">${esc(displayGroup(c))}</div></div>${saldo && L.inicio ? `<div class="amount">${eur(L.balanceToDate(c.codigo))}</div>` : ''}</li>`;
   view().innerHTML = `
     <h2 style="margin-top:4px">Mis cuentas</h2>
     <div class="card"><p class="small muted" style="margin-top:0">Donde tienes (o debes) el dinero: bancos, efectivo, inversiones, bienes y deudas.</p>
       <ul class="list">${listOf(['dinero', 'bien', 'deuda']).map((c) => accLi(c, true)).join('')}</ul>
-      <div class="row wrap" style="margin-top:8px"><button class="btn sm" data-new="dinero">+ Banco o inversión</button><button class="btn sm" data-new="bien">+ Bien</button><button class="btn sm" data-new="deuda">+ Deuda</button><button class="btn sm" id="bankmove">⇄ Cambiar de banco…</button></div></div>
+      <div class="row wrap" style="margin-top:8px"><button class="btn sm" data-new="dinero">+ Banco o inversión</button><button class="btn sm" data-new="bien">+ Bien</button><button class="btn sm" data-new="deuda">+ Deuda</button><button class="btn sm" id="bankmove">⇄ Cambiar de banco…</button><button class="btn sm" id="setprin">★ Cuenta principal…</button></div></div>
 
     <h2>Categorías</h2>
     <div class="card"><h3 style="margin-top:0">De gasto</h3><ul class="list">${listOf(['gasto']).map((c) => accLi(c)).join('')}</ul>
@@ -1941,6 +1941,7 @@ function viewAjustes() {
   $$('[data-act]').forEach((li) => { li.onclick = () => editActivo(li.dataset.act); });
   $('#addact').onclick = () => editActivo(null);
   $('#bankmove').onclick = cambioBanco;
+  $('#setprin').onclick = cfgMes;
   $$('[data-pre]').forEach((li) => { li.onclick = () => editPrestamo(li.dataset.pre); });
   $('#addpre').onclick = () => editPrestamo(null);
   $$('[data-acc]').forEach((li) => { li.onclick = () => editCuenta(li.dataset.acc); });

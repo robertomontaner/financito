@@ -97,7 +97,7 @@ Las líneas son aproximadas. Busca por el nombre de la función.
 - **Inversiones** (`viewInversiones`, `invCalc`, `xirr`, `invTotals`, `editInversion`, `invQuick`): seguimiento aparte de la contabilidad, con t0, v0 y el valor actual o de venta.
   - Calcula beneficio, rentabilidad, CAGR y TIR (XIRR por bisección) de abiertas, cerradas y el total.
 - **Ajustes** (`viewAjustes`): agrupa todo lo configurable.
-  - **Cuentas:** Mis cuentas (con «⇄ Cambiar de banco…») y Categorías.
+  - **Cuentas:** Mis cuentas (con «⇄ Cambiar de banco…» y «★ Cuenta principal…», que abre `cfgMes`; la principal y la de fondo llevan su chip) y Categorías.
   - **Automatizaciones:** `editRecurrente`.
   - **Activos y préstamos:** `editActivo` y `editPrestamo` (este último con `participacion`, la parte del usuario en una hipoteca compartida).
   - **Datos:**
